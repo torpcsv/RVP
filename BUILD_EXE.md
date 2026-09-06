@@ -70,7 +70,7 @@ copy /Y README.md dist\RVP\
 
 1. `dist\RVP\` フォルダを **フォルダごと** zip にする
    (例: エクスプローラで RVP フォルダを右クリック→「ZIPファイルに圧縮」。
-   zip名は `RVP_vx.x.x-win64.zip` のように **公開バージョン(`rvp/__init__.py`
+   zip名は `RVP-vx.x.x-win64.zip` のように **公開バージョン(`rvp/__init__.py`
    の `__version__`)** 入りにする。GitHub のタグも同じ番号 `v1.0.0`)。
    zip内は `RVP\RVP.exe` / `RVP\_internal\...` / `RVP\LICENSE` /
    `RVP\THIRD-PARTY-LICENSES.txt` / `RVP\README.md` という構成になる。
