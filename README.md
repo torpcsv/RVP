@@ -44,7 +44,7 @@
 
 ### 方法1: exe 版(推奨)
 
-1. [Releases](../../releases) から最新の `RVP_v○○○_win.zip` をダウンロードします。
+1. [Releases](../../releases) から最新の `RVP-vx.x.x-win64.zip` をダウンロードします。
 2. zip を展開し、`RVP` フォルダ内の **`RVP.exe`** を実行します
    (フォルダごと1セットです。exe 単体を移動しないでください)。
 
