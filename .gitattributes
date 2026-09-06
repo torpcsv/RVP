@@ -1,0 +1,12 @@
+# build_exe.bat must stay CP932 + CRLF (cmd.exe requirement).
+* text=auto
+*.bat text eol=crlf
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+LICENSE text eol=lf
+*.ico binary
+*.png binary

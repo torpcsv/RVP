@@ -1,0 +1,31 @@
+# RVP repository .gitignore
+
+# ---- internal notes / working documents (not published) ----
+*_DEV.md
+HANDOVER.md
+notes/
+
+# ---- development-only tools and test material ----
+icon_src/
+tools/
+test_*.py
+test_work*/
+tw_*/
+samples/
+
+# ---- build artifacts (PyInstaller) ----
+build/
+dist/
+*.spec
+
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ---- OS / editor ----
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,10 @@
+pygame-ce>=2.5
+buttplug-py>=0.2
+customtkinter>=5.2
+# 背景イラスト表示(=262)。customtkinterの必須依存として自動導入されるが、
+# 直接importするようになったため明記する
+pillow>=9.1
+# 編集画面のD&D(=44)。未導入でもD&D以外は動作する(オプショナル)
+tkinterdnd2>=0.4
+# TCodeデバイスへのシリアル直結(=80)。未導入でもTCode直結以外は動作する(オプショナル)
+pyserial>=3.5
