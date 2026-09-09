@@ -419,63 +419,150 @@ def layout_tree(data) -> dict:
 
 
 def _edge_line(c, x1, y1, x2, y2, r, dash, fill, width, self_loop):
-    """イベント図のエッジ1本を描く(形状規則は編集画面と同一)。"""
+    """イベント図のエッジ1本を描く(形状規則は編集画面と同一)。
+
+    =299(手動配置の導入に合わせて形状規則を一般化。ユーザー要望):
+    - **行き(x2>=x1)**は「円と円の中心を結ぶ直線」を円周で切った直線
+      (出発点は円の右に限定せず、相手に最も近い円周=右下・下からも出る)。
+      同じ行で 2 列以上離れているときだけ従来の上弧(間の円を跨ぐ)。
+    - **戻り(x2<x1)**は点線(線種は呼び出し側)。行きの直線と重ならないよう、
+      中心線から**下側の法線方向**へ膨らませた弧。端点も法線方向へ 6px
+      ずらして、同じ 2 円の往復が同じ場所を通らないようにする。
+    - 同じ列(x1==x2)は中心線=縦の直線(従来と同じ)。自己ループは従来どおり。
+    """
     if self_loop:
-        # 自己ループ
         c.create_line(x1 - 10, y1 - r + 2, x1 - 16, y1 - r - 22,
                       x1 + 16, y1 - r - 22, x1 + 10, y1 - r + 2,
                       smooth=True, fill=fill, width=width,
                       arrow="last", arrowshape=(8, 10, 4), dash=dash)
-    elif y1 != y2 and x1 == x2:
-        # 同じ列で行だけ違う(独立成分どうし等)は上下から直線
-        dy = r if y2 > y1 else -r
-        c.create_line(x1, y1 + dy, x2, y2 - dy, fill=fill,
-                      width=width, arrow="last",
-                      arrowshape=(10, 12, 5), dash=dash)
-    elif y1 != y2 and x2 > x1:
-        # =282: 行が違う右方向(行き)は「出発ノードの右」→「先ノードの左」の
-        # 直線(同じ行の右隣と同じ出発点に統一。従来は上下の端から出ていた)
-        c.create_line(x1 + r, y1, x2 - r, y2, fill=fill,
-                      width=width, arrow="last",
-                      arrowshape=(10, 12, 5), dash=dash)
-    elif y1 != y2:
-        # =282: 行が違う左方向(戻り)は「出発ノードの左」→「先ノードの右」を
-        # 結ぶ弧。同じ行の戻り(下弧)と同じ出発点/到着点で、弦に垂直な
-        # 下向きへ膨らませて行きの直線と重ならないようにする
-        ax, ay = x1 - r + 4, y1 + 8
-        bx, by = x2 + r - 4, y2 + 8
-        dx, dy = bx - ax, by - ay
-        ln = (dx * dx + dy * dy) ** 0.5 or 1.0
-        nx, ny = -dy / ln, dx / ln
-        if ny < 0:
-            nx, ny = -nx, -ny
-        k = r + 10
-        c.create_line(ax, ay, (ax + bx) / 2 + nx * k, (ay + by) / 2 + ny * k,
-                      bx, by, smooth=True, fill=fill, width=width,
-                      arrow="last", arrowshape=(9, 11, 4), dash=dash)
-    elif abs(x2 - x1) <= 120 and x2 > x1:
-        # 右隣は直線
-        c.create_line(x1 + r, y1, x2 - r, y2, fill=fill,
-                      width=width, arrow="last",
-                      arrowshape=(10, 12, 5), dash=dash)
-    elif x2 > x1:
-        # 右方向(離れている)は上弧
-        c.create_line(x1 + r - 4, y1 - 10, (x1 + x2) / 2, y1 - r - 16,
-                      x2 - r + 4, y2 - 10,
-                      smooth=True, fill=fill, width=width,
-                      arrow="last", arrowshape=(9, 11, 4), dash=dash)
-    else:
-        # 左方向(ループ・戻り)は下弧
-        c.create_line(x1 - r + 4, y1 + 10, (x1 + x2) / 2, y1 + r + 16,
-                      x2 + r - 4, y2 + 10,
-                      smooth=True, fill=fill, width=width,
-                      arrow="last", arrowshape=(9, 11, 4), dash=dash)
+        return
+    dx, dy = x2 - x1, y2 - y1
+    ln = (dx * dx + dy * dy) ** 0.5
+    if ln < 1e-6:
+        return
+    ux, uy = dx / ln, dy / ln
+    # 円周上の端点(中心線に沿って半径ぶん内側)
+    ax, ay = x1 + ux * r, y1 + uy * r
+    bx, by = x2 - ux * r, y2 - uy * r
+    if x2 >= x1:
+        if abs(dy) < r and dx > 120:
+            # 同じ行で離れている右方向は上弧(間の円を跨ぐ)
+            c.create_line(x1 + r - 4, y1 - 10, (x1 + x2) / 2, y1 - r - 16,
+                          x2 - r + 4, y2 - 10,
+                          smooth=True, fill=fill, width=width,
+                          arrow="last", arrowshape=(9, 11, 4), dash=dash)
+        else:
+            c.create_line(ax, ay, bx, by, fill=fill, width=width,
+                          arrow="last", arrowshape=(10, 12, 5), dash=dash)
+        return
+    # 戻り: 下側の法線へ膨らむ弧
+    nx, ny = -uy, ux
+    if ny < 0 or (abs(ny) < 1e-9 and nx < 0):
+        nx, ny = -nx, -ny
+    off = 6.0
+    ax, ay = ax + nx * off, ay + ny * off
+    bx, by = bx + nx * off, by + ny * off
+    k = r + 10
+    c.create_line(ax, ay, (ax + bx) / 2 + nx * k, (ay + by) / 2 + ny * k,
+                  bx, by, smooth=True, fill=fill, width=width,
+                  arrow="last", arrowshape=(9, 11, 4), dash=dash)
+
+
+# ---------------- =299: 手動配置 ----------------
+NODE_R = 26            # ノード半径(draw_event_map の r と同じ)
+GRID = NODE_R          # 手動配置の格子の幅・高さ(=円の半径。ユーザー決定)
+MANUAL_MIN = GRID * 2  # 左上の余白(円が図からはみ出さない最小の中心座標)
+
+
+def snap_grid(x, y) -> tuple[int, int]:
+    """(x, y) を格子(GRID)の最寄りの交点へ吸着し、左上の余白でクランプ。"""
+    gx = int(round(float(x) / GRID)) * GRID
+    gy = int(round(float(y) / GRID)) * GRID
+    return max(MANUAL_MIN, gx), max(MANUAL_MIN, gy)
+
+
+def overlaps(x, y, others, skip=None, r: int = NODE_R) -> bool:
+    """(x,y) に置いた円が他の円と**重なるか接する**なら True(接するも NG)。"""
+    lim = (2 * r) ** 2
+    for k, (ox, oy) in others.items():
+        if k == skip:
+            continue
+        if (ox - x) ** 2 + (oy - y) ** 2 <= lim + 1e-6:
+            return True
+    return False
+
+
+def nearest_free_cell(x, y, others, skip=None, max_cells: int = 8):
+    """(x,y)(格子上)に置けないとき、最も近い置ける格子点を探す。無ければ None。"""
+    if not overlaps(x, y, others, skip):
+        return (x, y)
+    best = None
+    for i in range(-max_cells, max_cells + 1):
+        for j in range(-max_cells, max_cells + 1):
+            if i == 0 and j == 0:
+                continue
+            cx, cy = x + i * GRID, y + j * GRID
+            if cx < MANUAL_MIN or cy < MANUAL_MIN:
+                continue
+            if overlaps(cx, cy, others, skip):
+                continue
+            d = i * i + j * j
+            if best is None or d < best[0]:
+                best = (d, cx, cy)
+    return None if best is None else (best[1], best[2])
+
+
+def stored_pos(ev) -> tuple[int, int] | None:
+    """イベントの \"pos\": [x, y] を読む(不正/無しは None)。"""
+    v = ev.get("pos") if isinstance(ev, dict) else None
+    if (isinstance(v, (list, tuple)) and len(v) == 2
+            and all(isinstance(n, (int, float)) and not isinstance(n, bool)
+                    for n in v)):
+        return int(v[0]), int(v[1])
+    return None
+
+
+def is_manual(data) -> bool:
+    return data.get("map_mode") == "manual"
+
+
+def manual_positions(data) -> dict:
+    """手動配置の座標 {ev_id: (x, y)} を返す(全イベントぶん)。
+
+    - 保存済み \"pos\" があればそれ(格子へ吸着はしない=そのまま尊重)。
+    - 無いイベント(新規追加/コピー/手動で JSON を書いた等)は、自動配置
+      (layout_tree)の位置を格子へ吸着し、**他の円と重なる/接するなら下へ
+      1格子ずつずらして**置く(ユーザー決定)。呼び出し側(編集画面)が
+      この結果を \"pos\" へ書き戻して確定させる。再生タブは書き戻さない。
+    """
+    events = data.get("events") or {}
+    auto = layout_tree(data)
+    out: dict = {}
+    for ev_id, ev in events.items():
+        p = stored_pos(ev)
+        if p is not None:
+            out[ev_id] = p
+    for ev_id in events:
+        if ev_id in out:
+            continue
+        x, y = snap_grid(*auto.get(ev_id, (MANUAL_MIN, MANUAL_MIN)))
+        while overlaps(x, y, out):
+            y += GRID
+        out[ev_id] = (x, y)
+    return out
 
 
 def draw_event_map(canvas, data, *, selected=None, current=None,
                    trail=None, glow=None, visited=None,
-                   on_click=None, on_rclick=None) -> dict:
+                   on_click=None, on_rclick=None,
+                   positions=None, on_move=None) -> dict:
     """イベント図を canvas へ描画する。positions({ev_id:(x,y)})を返す。
+
+    - positions: =299 手動配置の座標(None=自動配置 layout_tree)
+    - on_move: =299 ノードをドラッグして離したときのコールバック
+      (ev_id, (x, y))。x,y は格子へ吸着し「重なる/接する」を避けた最寄りの
+      格子点(置けなければ呼ばれず元の位置へ戻す)。None ならドラッグ不可。
+      ドラッグ開始の閾値は 4px(それ未満はクリック=on_click)。
 
     - selected: 編集画面の選択ノード(=124: 緑コーナー枠┏┓┗┛で表示)
     - current: 現在実行中イベント(=124: selected と同じ緑コーナー枠)
@@ -490,9 +577,12 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
     c = canvas
     c.configure(bg=canvas_bg())   # テーマに応じて背景色を追従
     c.delete("all")
-    r = 26
+    r = NODE_R
     trail = set(trail or ())
-    positions = layout_tree(data)
+    if positions is None:
+        positions = layout_tree(data)
+    else:
+        positions = dict(positions)
     xs = [px for (px, _py) in positions.values()] or [60]
     max_x = max(xs) + r           # 最右ノードの右端(スクロール域算出用)
 
@@ -585,7 +675,9 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
                           text=tr("▶動画") if has_states
                           else video_label(ev_videos),
                           fill=video_label_color(), font=(appfont.FAMILY, 8), tags=tag)
-        if on_click is not None:
+        if on_move is not None:
+            _bind_drag(c, tag, ev_id, positions, on_click, on_move)
+        elif on_click is not None:
             c.tag_bind(tag, "<Button-1>",
                        lambda _e, i=ev_id: on_click(i))
         if on_rclick is not None:
@@ -597,6 +689,44 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
     bottom = max(ys) + r + 24
     c.configure(scrollregion=(0, 0, max_x + 40, bottom))
     return positions
+
+
+def _bind_drag(c, tag, ev_id, positions, on_click, on_move):
+    """=299: ノードの D&D(手動配置)。押下→4px 以上動いたらドラッグ、
+    離したら格子へ吸着して on_move。動かなければクリック(on_click)。"""
+    st = {"x": 0, "y": 0, "sx": 0, "sy": 0, "drag": False}
+
+    def press(e):
+        st["x"] = st["sx"] = c.canvasx(e.x)
+        st["y"] = st["sy"] = c.canvasy(e.y)
+        st["drag"] = False
+        c.tag_raise(tag)
+
+    def motion(e):
+        cx, cy = c.canvasx(e.x), c.canvasy(e.y)
+        if not st["drag"] and abs(cx - st["sx"]) < 4 and abs(cy - st["sy"]) < 4:
+            return
+        st["drag"] = True
+        c.move(tag, cx - st["x"], cy - st["y"])
+        st["x"], st["y"] = cx, cy
+
+    def release(e):
+        if not st["drag"]:
+            if on_click is not None:
+                on_click(ev_id)
+            return
+        ox, oy = positions[ev_id]
+        nx = ox + (c.canvasx(e.x) - st["sx"])
+        ny = oy + (c.canvasy(e.y) - st["sy"])
+        gx, gy = snap_grid(nx, ny)
+        cell = nearest_free_cell(gx, gy, positions, skip=ev_id)
+        if cell is None:
+            cell = (ox, oy)          # 置けない→元の位置へ戻す
+        on_move(ev_id, cell)
+
+    c.tag_bind(tag, "<Button-1>", press)
+    c.tag_bind(tag, "<B1-Motion>", motion)
+    c.tag_bind(tag, "<ButtonRelease-1>", release)
 
 
 def _state_edge_line(c, x1, x2, y, r, dashed, fill, width):

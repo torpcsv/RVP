@@ -9702,11 +9702,14 @@ class ScenarioEditor(ctk.CTkToplevel):
             # =72: 自動フィットの切替は図が開いているときだけ意味を持つ
             if not self.map_fit_btn.winfo_manager():
                 self.map_fit_btn.pack(side="left", padx=(8, 0))
+            if not self.map_mode_btn.winfo_manager():     # =299
+                self.map_mode_btn.pack(side="left", padx=(8, 0))
         else:
             self.map_toggle_btn.configure(text=tr("▶ 折りたたみ中"))
             self.canvas_wrap.pack_forget()
             self.map_sash.pack_forget()   # =285
             self.map_fit_btn.pack_forget()
+            self.map_mode_btn.pack_forget()
 
     # ---- イベント遷移図の自動フィット(=72) ----
     #
@@ -9994,6 +9997,13 @@ class ScenarioEditor(ctk.CTkToplevel):
             fg_color="transparent", border_width=0, text_color=TEXT_MUTED,
             hover_color=("gray85", "gray25"),
             command=self._toggle_map_fit)
+        # =299: 配置モード(自動/手動)。「図の高さに合わせる」の右隣
+        self.map_mode_btn = ctk.CTkButton(
+            bar, text="", width=96, height=18,
+            font=ctk.CTkFont(size=11), anchor="w",
+            fg_color="transparent", border_width=0, text_color=TEXT_MUTED,
+            hover_color=("gray85", "gray25"),
+            command=self._toggle_map_mode)
         # ウィンドウのリサイズで自動フィットの天井を追従させる(=72)
         self.bind("<Configure>", self._on_win_configure, add="+")
 
@@ -12160,7 +12170,46 @@ class ScenarioEditor(ctk.CTkToplevel):
         self._hist_last["state"] = self.sel_state
         self._hist_update_buttons()
 
+    # ---- =299: イベント図の配置モード(自動/手動) ----
+    def _map_manual(self) -> bool:
+        return _smap.is_manual(self.data)
+
+    def _toggle_map_mode(self):
+        """自動⇄手動。手動→自動は自動配置で描くが、各イベントの "pos" は
+        **残す**(次に手動へ戻すと前の配置が復活。ユーザー決定)。"""
+        if self._map_manual():
+            self.data.pop("map_mode", None)
+        else:
+            self.data["map_mode"] = "manual"
+        self._redraw_canvas()
+
+    def _refresh_map_mode_btn(self):
+        manual = self._map_manual()
+        self.map_mode_btn.configure(
+            text=tr("配置：手動") if manual else tr("配置：自動"),
+            text_color=ACCENT_TEXT if manual else TEXT_MUTED)
+
+    def _on_node_moved(self, ev_id: str, xy):
+        """=299: ノードを D&D で離した(格子へ吸着・重なり回避済み)。"""
+        ev = self.data["events"].get(ev_id)
+        if not isinstance(ev, dict):
+            return
+        ev["pos"] = [int(xy[0]), int(xy[1])]
+        self._redraw_canvas()
+
     def _redraw_canvas(self):
+        # =299: 手動配置なら座標を確定(pos の無いイベントは自動配置から
+        # 格子へ吸着し、重なるなら下へずらした位置を書き戻す)
+        positions = on_move = None
+        if _smap.is_manual(self.data):
+            positions = _smap.manual_positions(self.data)
+            for ev_id, (x, y) in positions.items():
+                ev = self.data["events"].get(ev_id)
+                if isinstance(ev, dict) and _smap.stored_pos(ev) != (x, y):
+                    ev["pos"] = [int(x), int(y)]
+            on_move = self._on_node_moved
+        if hasattr(self, "map_mode_btn"):
+            self._refresh_map_mode_btn()
         # =277: 構造操作(追加/削除/リネーム/コピー/変数・監視/背景 等)は
         # 最後に必ずここを通るので、履歴チェックポイントを置く
         self._hist_check()
@@ -12171,7 +12220,8 @@ class ScenarioEditor(ctk.CTkToplevel):
         _smap.draw_event_map(
             self.canvas, self.data,
             selected=self.selected,
-            on_click=self._select, on_rclick=self._on_event_node_rclick)
+            on_click=self._select, on_rclick=self._on_event_node_rclick,
+            positions=positions, on_move=on_move)
         # =72: 描画後の scrollregion が図の実高さなので、ここで反映する
         # (イベントの追加・削除・分岐の変更にも自動で追従する)
         self._apply_map_height()
@@ -15742,6 +15792,7 @@ class ScenarioEditor(ctk.CTkToplevel):
         new_id = self._unique_copy_id(self.data["events"], base)
         dup = json.loads(json.dumps(self.data["events"][ev_id]))
         dup["next"] = None   # 終了時の遷移先はコピーしない(ループ防止)
+        dup.pop("pos", None)  # =299: 手動配置の座標は複製しない(重なるため)
         self.data["events"][new_id] = dup
         # チェーン末尾が未接続(next無し)のときだけつなぐ(分岐設定は壊さない)
         chain, _ = self._chain_order()

@@ -4108,9 +4108,13 @@ class RVPApp:
             return
 
         pairs = set(zip(trail_ids, trail_ids[1:]))
+        # =299: 手動配置のシナリオは保存された座標で描く(再生タブは書き戻さない)
+        manual_pos = scenario_map.manual_positions(data) \
+            if scenario_map.is_manual(data) else None
         positions = scenario_map.draw_event_map(
             c, data, current=cur or None, trail=pairs,
-            glow=glow, visited=visited, on_click=None)
+            glow=glow, visited=visited, on_click=None,
+            positions=manual_pos)
 
         # ステート形式イベント実行中(および停止後の余韻)は下半分にステート図
         ev_raw = data["events"].get(cur) if cur else None

@@ -889,6 +889,19 @@ def _is_num(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+def check_node_pos(raw: dict, where: str) -> None:
+    """=299: イベント図の手動配置座標 "pos": [x, y] を検証する(省略可)。
+    表示専用。数値2つの配列以外はエラー(作りかけ検出=40の方針)。"""
+    v = raw.get("pos")
+    if v is None:
+        return
+    ok = (isinstance(v, list) and len(v) == 2
+          and all(_is_num(n) for n in v))
+    if not ok:
+        raise ValueError(
+            tr('{0}: pos は [x, y] の数値2つで指定してください').format(where))
+
+
 def check_node_color(raw: dict, where: str) -> None:
     """=124: イベント/ステートのノード色 "color" を検証する(省略可)。
 
@@ -1336,6 +1349,12 @@ class Scenario:
         if not isinstance(bgm_enabled, bool):
             raise ValueError(
                 tr("bgm_enabled は true/false で指定してください"))
+
+        # =299: イベント図の配置モード(表示専用)。省略=auto
+        map_mode = data.get("map_mode", "auto")
+        if map_mode not in ("auto", "manual"):
+            raise ValueError(
+                tr('map_mode は "auto" か "manual" で指定してください'))
 
         def resolve(p: str | None) -> str | None:
             if not p:
@@ -2670,8 +2689,9 @@ class Scenario:
                     if next_choice is not None or next_input is not None:
                         raise ValueError(
                             tr("{0}: advance(すごろく)は選択肢/数値入力の遷移には使えません").format(where))
-                # =124 ノードの着色(表示専用)
+                # =124 ノードの着色(表示専用) / =299 手動配置の座標
                 check_node_color(raw, where)
+                check_node_pos(raw, where)
                 on_start_ops = parse_ops(raw.get("on_start"),
                                          tr("{0} on_start").format(where))
                 on_end_ops = parse_ops(raw.get("on_end"),

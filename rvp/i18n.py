@@ -1684,6 +1684,13 @@ EN: dict[str, str] = {
     "▶ 折りたたみ中": "▶ Collapsed",
     # =72: イベント遷移図の自動フィット
     "図の高さに合わせる": "Fit to map height",
+    # =299: イベント図の配置モード
+    "配置：自動": "Layout: auto",
+    "配置：手動": "Layout: manual",
+    'map_mode は "auto" か "manual" で指定してください':
+        'map_mode must be "auto" or "manual"',
+    '{0}: pos は [x, y] の数値2つで指定してください':
+        '{0}: pos must be two numbers [x, y]',
     # =57: 手動操作(▶▶/◀◀)の遷移理由
     "イベント終了: 手動でスキップ(▶▶)": "Event end: skipped manually (>>)",
     "イベント終了: 手動で巻き戻し(◀◀)": "Event end: rewound manually (<<)",
