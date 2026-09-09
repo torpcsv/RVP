@@ -7052,7 +7052,7 @@ class ItemReviewDialog(ctk.CTkToplevel):
         if on == self._edit_pair:
             pass
         elif on:
-            g1.pack(fill="both", expand=True, pady=(4, 0),
+            g1.pack(fill="both", expand=True, pady=(0, 0),   # =298: 上下を詰める
                     after=g0)
         else:
             if g1.winfo_ismapped():
@@ -7067,6 +7067,14 @@ class ItemReviewDialog(ctk.CTkToplevel):
         # =243: 左右2本のときは 上(左)=L / 下(右)=R を全高で描く
         g0.wave_channel = 0 if on else None
         g1.wave_channel = 1 if on else None
+        # =298(要望4-①〜③): 2本のときは縮尺表示・「追従停止中」を上だけ、
+        # 時間ラベルを下だけにして、上下のグラフを詰める
+        g0.show_scale = True
+        g0.show_follow_hint = True
+        g0.show_time = not on
+        g1.show_scale = False
+        g1.show_follow_hint = False
+        g1.show_time = True
         self._apply_graph_heights()
 
     def _apply_graph_heights(self):
@@ -7100,6 +7108,8 @@ class ItemReviewDialog(ctk.CTkToplevel):
         # =232: 左右2本ぶん用意する(2本目は5列csvのときだけ出す)
         self._edit_models = [script_edit.ScriptEditModel(),
                              script_edit.ScriptEditModel()]
+        # =298: 左右2本のクリップボード共有と UNDO の一本化(要望2/3)
+        self._edit_link = script_edit.EditLink(self._edit_models)
         self._edit_active = 0
         self._edit_pair = False
         wrap = ctk.CTkFrame(self, corner_radius=10, fg_color=BOX_BG,
@@ -7444,6 +7454,10 @@ class ItemReviewDialog(ctk.CTkToplevel):
             on_select=lambda: None, on_menu=lambda *_a: None,
             height=self.EDIT_GRAPH_H)
         self.edit_sub_graph.make_readonly(self._edit_graphs[0])
+        # =298(要望4-④): サブ表示には縮尺・時間ラベル・追従停止中を出さない
+        self.edit_sub_graph.show_scale = False
+        self.edit_sub_graph.show_time = False
+        self.edit_sub_graph.show_follow_hint = False
         # =232: 表示を揃える仲間(左・右・サブ)を相互に結ぶ
         g0, g1, gs = self._edit_graphs[0], self._edit_graphs[1], \
             self.edit_sub_graph
@@ -8537,11 +8551,17 @@ class ItemReviewDialog(ctk.CTkToplevel):
 
     def _on_grid_change(self):
         # グリッド設定の変更は UNDO の対象外(仕様 4.5)
-        self.edit_graph.grid_pos = self._grid_pos_map.get(
-            self.grid_pos_var.get(), 10)
-        self.edit_graph.grid_at = self._grid_at_map.get(
-            self.grid_at_var.get(), 100)
-        self.edit_graph.redraw()
+        # =298(要望1): 左右2本(とサブ表示)の**全部**へ反映する(以前は
+        # アクティブな方だけだった)
+        gp = self._grid_pos_map.get(self.grid_pos_var.get(), 10)
+        ga = self._grid_at_map.get(self.grid_at_var.get(), 100)
+        graphs = list(self.edit_graphs)
+        if getattr(self, "edit_sub_graph", None) is not None:
+            graphs.append(self.edit_sub_graph)
+        for g in graphs:
+            g.grid_pos = gp
+            g.grid_at = ga
+            g.redraw()
 
     # ---- 右クリックメニュー(仕様 4.4 / P2 =173: パターン項目) ----
 

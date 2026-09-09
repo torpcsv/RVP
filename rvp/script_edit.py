@@ -573,6 +573,61 @@ def plan_connect_both(shape, a1: float, q1: float, a2: float, q2: float,
                  round_interior=round_interior, pos_max=pos_max)
 
 
+class EditLink:
+    """=298: 5列csv(UFOTW)の左右2本の編集モデルを束ねる(ユーザー要望2/3)。
+
+    - **クリップボードの共有**: どちらでコピー/切り取りしても、全モデルの
+      clipboard へ同じ内容が入る(片方でコピー→もう片方へ貼り付け)。
+    - **UNDO/REDO の一本化**: 変更の発生順を `order` に記録し、Ctrl+Z は
+      どのグラフにフォーカスがあっても**最後に変更したモデル**を1つ戻す
+      (左→右→左→右と打点したら、右→左→右→左の順に戻る)。REDO も同じ。
+      各モデルの `_undo`/`_redo` はそのまま使い、順番だけをここで持つ。
+    """
+
+    def __init__(self, models=()):
+        self.models: list = list(models)
+        self.order: list = []          # 変更した順のモデル(UNDO 用)
+        self.redo_order: list = []     # 戻した順のモデル(REDO 用)
+        for m in self.models:
+            m.link = self
+
+    def reset(self) -> None:
+        self.order = []
+        self.redo_order = []
+
+    def record(self, model) -> None:
+        """model._push() から呼ばれる: 変更順を積み、REDO を捨てる。"""
+        self.order.append(model)
+        if len(self.order) > UNDO_LIMIT * max(1, len(self.models)):
+            del self.order[0]
+        self.redo_order = []
+
+    def share_clipboard(self, src) -> None:
+        for m in self.models:
+            if m is not src:
+                m.clipboard = list(src.clipboard) \
+                    if src.clipboard is not None else None
+                m.clipboard_patterns = [dict(pc) for pc in
+                                        src.clipboard_patterns]
+
+    def undo(self):
+        """最後に変更したモデルを1つ戻す。戻したモデル(無ければ None)。"""
+        while self.order:
+            m = self.order.pop()
+            if m._undo_local():
+                self.redo_order.append(m)
+                return m
+        return None
+
+    def redo(self):
+        while self.redo_order:
+            m = self.redo_order.pop()
+            if m._redo_local():
+                self.order.append(m)
+                return m
+        return None
+
+
 class ScriptEditModel:
 
     """編集中の点列と選択・クリップボード・UNDO を持つ(Tk非依存)。
@@ -617,6 +672,9 @@ class ScriptEditModel:
         # =297: pos の上限(分解能)。funscript=100 / csv=200(速度1刻み:
         # 下端=逆回転100 / 中央100=停止 / 上端=正回転100)。
         self.pos_max = 100
+        # =298: 左右2本を束ねる EditLink(None=単独)。
+        self.link = None
+        self.last_undone = None        # 直前の undo/redo で戻したモデル
         self._undo: list = []
         self._redo: list = []
         self.dirty = False
@@ -649,6 +707,8 @@ class ScriptEditModel:
         self._undo = []
         self._redo = []
         self.dirty = False
+        if self.link is not None:          # =298: 読み直しで順番も捨てる
+            self.link.reset()
 
     def duration_ms(self) -> int:
         return self.points[-1][0] if self.points else 0
@@ -783,8 +843,28 @@ class ScriptEditModel:
             del self._undo[0]
         self._redo = []
         self.dirty = True
+        if self.link is not None:
+            self.link.record(self)
 
     def undo(self) -> bool:
+        """=298: link があれば**最後に変更したモデル**(自分とは限らない)を
+        戻す。戻したモデルは `last_undone` に入る(グラフの再描画用)。"""
+        if self.link is not None:
+            m = self.link.undo()
+            self.last_undone = m
+            return m is not None
+        self.last_undone = self if self._undo_local() else None
+        return self.last_undone is not None
+
+    def redo(self) -> bool:
+        if self.link is not None:
+            m = self.link.redo()
+            self.last_undone = m
+            return m is not None
+        self.last_undone = self if self._redo_local() else None
+        return self.last_undone is not None
+
+    def _undo_local(self) -> bool:
         if not self._undo:
             return False
         self._redo.append(self._snapshot())
@@ -795,7 +875,7 @@ class ScriptEditModel:
         self.dirty = True
         return True
 
-    def redo(self) -> bool:
+    def _redo_local(self) -> bool:
         if not self._redo:
             return False
         self._undo.append(self._snapshot())
@@ -1814,6 +1894,8 @@ class ScriptEditModel:
                 "shape": tuple((a - lo, self.pos_of(a)) for a in ats),
                 "name": self.patterns[i]["name"]})
         self.clipboard_patterns = plist
+        if self.link is not None:          # =298: 左右で共有
+            self.link.share_clipboard(self)
         return True
 
     def cut_selected(self) -> bool:
@@ -2590,6 +2672,13 @@ class ScriptEditGraph(tk.Canvas):
         self.active_color = "#1f6aa5"
         self.on_activate = None     # クリックで「アクティブになった」通知
         self.corner_text = ""       # 右上の見出し(「左（ロータ1）」など)
+        # =298(要望4): 周辺表示の出し分け。5列csv の左右2本を縦に詰めるため、
+        # 縮尺表示・「追従停止中」は上のグラフだけ、時間ラベルは下のグラフ
+        # だけに出す。サブ表示(=227)は全部出さない。False にしたぶんの
+        # 余白(SCALE_H / AXIS_H)は _plot が詰める。
+        self.show_scale = True
+        self.show_time = True
+        self.show_follow_hint = True
         # =227: グラフ上のマウス位置(停止中の F キー配置に使う)
         self._mouse_xy = None
         self.bind("<ButtonPress-1>", self._on_press1)
@@ -2874,6 +2963,7 @@ class ScriptEditGraph(tk.Canvas):
                            or sub.view_ms != self.view_ms
                            or sub.now_ms != self.now_ms
                            or sub.playing != self.playing
+                           or sub.follow != self.follow
                            or sub.region != self.region)
                 sub.level = self.level
                 sub.view_ms = self.view_ms
@@ -3492,9 +3582,15 @@ class ScriptEditGraph(tk.Canvas):
         if p is None:
             w = self.winfo_width()
             h = self.winfo_height()
-            top = self.TOP_PAD + self.SCALE_H
+            # =298: 縮尺表示を出さないグラフは上端を詰める(「100」ラベル・
+            # 見出し・時間グリッドの張り出し(top-12)ぶんの 14px は残す)
+            top = self.TOP_PAD + self.SCALE_H if self.show_scale else 14
+            # 時間ラベルを出さないグラフは下端も詰める(ヒートマップの帯が
+            # 出るときはその高さぶんだけ残す)
+            bottom = self.AXIS_H if self.show_time else \
+                (16 if self.heat else 6)
             p = (self.GUTTER, top, max(self.GUTTER + 1, w - 4),
-                 max(top + 1, h - self.AXIS_H))
+                 max(top + 1, h - bottom))
             self._plot_cache = p
         return p
 
@@ -3528,9 +3624,13 @@ class ScriptEditGraph(tk.Canvas):
     def _anchor(self) -> float:
         """view_ms を置く水平位置(=198/=201)。**初期表示だけ左寄り
         (VIEW_ANCHOR=0.12)**で、一度でも再生したら以後は一時停止中も
-        含めて中央(0.5)。initial_view() でリセットされる。"""
-        return 0.5 if (self.follow and (self.playing or self._played)) \
-            else self.VIEW_ANCHOR
+        含めて中央(0.5)。initial_view() でリセットされる。
+
+        =298(要望5): **追従の有無でアンカーを変えない**。以前は右ドラッグで
+        追従が止まった瞬間に 0.5→0.12 へ切り替わり、表示範囲が 0.38 幅ぶん
+        右へ飛んで再生位置の線が左端へ瞬間移動していた。パンは view_ms の
+        差分だけで動くので、アンカーを固定すれば画面は連続する。"""
+        return 0.5 if (self.playing or self._played) else self.VIEW_ANCHOR
 
     def set_playing(self, playing: bool):
         """再生状態の通知(=198/=201)。再生を開始したら追従アンカーは
@@ -4163,19 +4263,26 @@ class ScriptEditGraph(tk.Canvas):
         if self.readonly:            # =227: サブ表示は見るだけ
             return "break"
         if self.model.undo():
-            self._notify_change()
-            self._notify_select()
-            self.redraw()
+            self._after_history()
         return "break"
 
     def _key_redo(self, _event=None):
         if self.readonly:            # =227: サブ表示は見るだけ
             return "break"
         if self.model.redo():
-            self._notify_change()
-            self._notify_select()
-            self.redraw()
+            self._after_history()
         return "break"
+
+    def _after_history(self):
+        """=298: UNDO/REDO 後の後始末。戻したのが**仲間のモデル**(左右
+        共有の UNDO)なら、そのグラフの選択パターン表示も畳んで描き直す。"""
+        target = self.model.last_undone
+        for g in [self] + [p for p in self.peers if p is not None]:
+            if g.model is target or g is self:
+                g.sel_pattern = None
+                g.redraw()
+        self._notify_change()
+        self._notify_select()
 
     def _notify_change(self):
         if callable(self.on_change):
@@ -4616,7 +4723,7 @@ class ScriptEditGraph(tk.Canvas):
             step *= 2.0
         self._label_step_ms = step
         t = int(left // step) * step
-        while t <= left + span + 1:
+        while t <= left + span + 1 and self.show_time:
             if t >= 0:
                 x = self.x_of(t)
                 if x0 <= x <= w:
@@ -4631,19 +4738,20 @@ class ScriptEditGraph(tk.Canvas):
         # 「0.25秒┗━┛」のように描く。ブラケットの横幅=実際の mid 間隔ぶん
         # (Google Map の縮尺と同じ考え方=長さそのものが縮尺の実感)
         # 基線は「100」ラベル(top の上側に約12px)のさらに上
-        sy = top - 14
-        scol = self._c(_DG.C_AXIS_TEXT)
-        tid = self.create_text(4, sy, anchor="sw",
-                               text=self.fmt_scale_s(mid), fill=scol,
-                               font=(appfont.FAMILY, 8),
-                               tags=("scale_text",))
-        bx0 = self.bbox(tid)[2] + 4
-        bw = mid * 1000.0 * px_per_ms
-        bx1 = min(float(w - 4), bx0 + bw)
-        self.create_line(bx0, sy - 4, bx0, sy, bx1, sy, bx1, sy - 4,
-                         fill=scol, width=1, tags=("scale_bar",))
+        if self.show_scale:
+            sy = top - 14
+            scol = self._c(_DG.C_AXIS_TEXT)
+            tid = self.create_text(4, sy, anchor="sw",
+                                   text=self.fmt_scale_s(mid), fill=scol,
+                                   font=(appfont.FAMILY, 8),
+                                   tags=("scale_text",))
+            bx0 = self.bbox(tid)[2] + 4
+            bw = mid * 1000.0 * px_per_ms
+            bx1 = min(float(w - 4), bx0 + bw)
+            self.create_line(bx0, sy - 4, bx0, sy, bx1, sy, bx1, sy - 4,
+                             fill=scol, width=1, tags=("scale_bar",))
 
-        if not self.follow and not self.plain:
+        if not self.follow and not self.plain and self.show_follow_hint:
             self.create_text(w - 4, 2, anchor="ne",
                              text=tr("追従停止中（再生で戻る）"),
                              fill=self._c(("#8f6300", "#e0a23a")),
