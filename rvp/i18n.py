@@ -1687,6 +1687,10 @@ EN: dict[str, str] = {
     # =299: イベント図の配置モード
     "配置：自動": "Layout: auto",
     "配置：手動": "Layout: manual",
+    # =300: イベント遷移図のドッキング解除
+    "ドッキング解除": "Undock",
+    "ドッキング": "Dock",
+    "イベント遷移図": "Event map",
     'map_mode は "auto" か "manual" で指定してください':
         'map_mode must be "auto" or "manual"',
     '{0}: pos は [x, y] の数値2つで指定してください':

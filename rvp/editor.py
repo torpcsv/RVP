@@ -9515,6 +9515,7 @@ class ScenarioEditor(ctk.CTkToplevel):
         self._apply_device_enabled()   # =252: OFFで開いたシナリオへ即反映
         self._apply_bgm_enabled()      # =256: 同上(BGM)
         self._init_map_toggle()
+        self._init_map_undock()        # =300
         self._redraw_canvas()
         # =64(体感の起動短縮): ここまでで骨組み(ツリー・図・パネルの枠)は
         # 揃っているので、**先にウィンドウを見せてから**中身(選択イベントの
@@ -9661,6 +9662,174 @@ class ScenarioEditor(ctk.CTkToplevel):
     # メインウィンドウ(690x820・左上0,0)の右側に並べられる幅にしてある。
     WIN_W, WIN_H = 1360, 820
 
+    # ---- =300: 2段目バー+イベント遷移図(ドッキング/別ウィンドウ共用) ----
+    #
+    # Tk はウィジェットの親を付け替えられないので、ドッキング解除/ドッキングの
+    # たびに**バーと図を作り直す**。self.undo_btn / map_toggle_btn / map_fit_btn /
+    # map_mode_btn / canvas / canvas_wrap / map_sash などの参照は現在の側を
+    # 指すよう付け替える(既存ロジックは self.canvas 経由なのでそのまま動く)。
+    # 履歴(=277)は編集画面に1本なので、どちらのウィンドウで Ctrl+Z しても
+    # 同じ順で戻る。
+    def _build_map_area(self, parent, docked: bool):
+        before = {}
+        if docked and getattr(self, "panel_wrap", None) is not None:
+            before = {"before": self.panel_wrap}   # 再ドッキング時の差し込み位置
+        # 2段目: イベント操作+インポート+図の折りたたみ(=255でmap_bar統合)
+        bar = ctk.CTkFrame(parent, fg_color="transparent")
+        if docked:
+            bar.pack(fill="x", padx=14, pady=(0, 0), **before)
+        else:
+            bar.pack(fill="x", padx=8, pady=(6, 0))
+        ctk.CTkButton(bar, text=tr("＋ イベント追加"), width=110, height=30,
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                      command=self._add_event).pack(side="left", padx=4)
+        ctk.CTkButton(bar, text=tr("イベント削除"), width=110, height=30,
+                      fg_color="transparent", border_width=1,
+                      border_color="#e05a5a", text_color="#e05a5a",
+                      hover_color=("gray85", "gray25"),
+                      command=self._delete_event).pack(side="left", padx=4)
+        ctk.CTkButton(bar, text=tr("イベントコピー"), width=110, height=30,
+                      fg_color="transparent", border_width=1,
+                      border_color=MUTED, text_color=("gray20", "gray85"),
+                      hover_color=("gray85", "gray25"),
+                      command=self._copy_event).pack(side="left", padx=4)
+        self.tool_sep = _toolbar_sep(bar)
+        ctk.CTkButton(bar, text=tr("インポート"), width=100, height=30,
+                      fg_color="transparent", border_width=1,
+                      border_color=MUTED, text_color=("gray20", "gray85"),
+                      hover_color=("gray85", "gray25"),
+                      command=self._open_import_dialog).pack(side="left", padx=4)
+        # =277: 元に戻す/やり直す(履歴が無いときは無効表示)
+        _toolbar_sep(bar)
+        self.undo_btn = ctk.CTkButton(
+            bar, text=tr("↶ 元に戻す"), width=100, height=30,
+            fg_color="transparent", border_width=1,
+            border_color=MUTED, text_color=("gray20", "gray85"),
+            hover_color=("gray85", "gray25"),
+            command=self._undo)
+        self.undo_btn.pack(side="left", padx=4)
+        self.redo_btn = ctk.CTkButton(
+            bar, text=tr("↷ やり直す"), width=100, height=30,
+            fg_color="transparent", border_width=1,
+            border_color=MUTED, text_color=("gray20", "gray85"),
+            hover_color=("gray85", "gray25"),
+            command=self._redo)
+        self.redo_btn.pack(side="left", padx=4)
+        # Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z。Toplevel への bind は配下の全
+        # ウィジェット(bindtags にトップレベルを含む)で効く。=300: 別
+        # ウィンドウ側にも同じものを束ねる(履歴は編集画面と共通の1本)
+        top = parent.winfo_toplevel()
+        top.bind("<Control-z>", lambda e: self._undo() or "break")
+        top.bind("<Control-y>", lambda e: self._redo() or "break")
+        top.bind("<Control-Z>", lambda e: self._redo() or "break")
+        self._hist_update_buttons()
+        # 図の折りたたみトグル(=58)+自動フィット(=72)。=255でこの段へ統合
+        # (旧・図直上の細い行 map_bar は廃止。表記も「▼ 折りたたみ」/
+        # 「▶ 折りたたみ中」へ変更=Q3)。区切り線は挟まない(テキストリンク調
+        # で見た目が違うため=Q5)。canvas_wrap の pack アンカーとして
+        # self.map_bar 名は維持する。
+        self.map_bar = bar
+        self.map_toggle_btn = ctk.CTkButton(
+            bar, text="", width=110, height=18,
+            font=ctk.CTkFont(size=11), anchor="w",
+            fg_color="transparent", text_color=TEXT_MUTED,
+            hover_color=("gray85", "gray25"),
+            command=self._toggle_map)
+        if docked:
+            self.map_toggle_btn.pack(side="left", padx=(10, 0))
+        self.map_fit_btn = ctk.CTkButton(
+            bar, text=tr("図の高さに合わせる"), width=120, height=18,
+            font=ctk.CTkFont(size=11), anchor="w",
+            fg_color="transparent", border_width=0, text_color=TEXT_MUTED,
+            hover_color=("gray85", "gray25"),
+            command=self._toggle_map_fit)
+        # =299: 配置モード(自動/手動)。「図の高さに合わせる」の右隣
+        self.map_mode_btn = ctk.CTkButton(
+            bar, text="", width=96, height=18,
+            font=ctk.CTkFont(size=11), anchor="w",
+            fg_color="transparent", border_width=0, text_color=TEXT_MUTED,
+            hover_color=("gray85", "gray25"),
+            command=self._toggle_map_mode)
+        if not docked:
+            # =300: 別ウィンドウでは折りたたみ/自動フィット/取っ手は無し。
+            # 「配置」だけ出し、右端に「ドッキング」
+            self.map_mode_btn.pack(side="left", padx=(8, 0))
+            ctk.CTkButton(
+                bar, text=tr("ドッキング"), width=96, height=18,
+                font=ctk.CTkFont(size=11), anchor="e",
+                fg_color="transparent", border_width=0, text_color=TEXT_MUTED,
+                hover_color=("gray85", "gray25"),
+                command=self._dock_map).pack(side="right", padx=(0, 4))
+        else:
+            self.map_undock_btn = ctk.CTkButton(
+                bar, text=tr("ドッキング解除"), width=110, height=18,
+                font=ctk.CTkFont(size=11), anchor="w",
+                fg_color="transparent", border_width=0, text_color=TEXT_MUTED,
+                hover_color=("gray85", "gray25"),
+                command=self._undock_map)
+
+        # (=255: タイトルラベルは1段目 head_bar 内へ、折りたたみトグルと
+        #  「図の高さに合わせる」は2段目 bar 内へ統合済み)
+
+        # キャンバス(イベントの数珠つなぎ)。イベントが増えて図が画面外に
+        # 伸びても見られるよう、縦横スクロールバーを付ける(grid配置)。
+        # 高さは=58で170→110へ(1600x900のデスクトップ対応)。
+        # CTkFrame は既定で 200px の高さを要求するので、grid_propagate(False)
+        # + 明示の height で「キャンバス高さ+スクロールバー」に固定する
+        # (=58。これをしないと CANVAS_H を下げても枠が縮まない)。
+        canvas_wrap = ctk.CTkFrame(parent, corner_radius=10,
+                                   height=self.CANVAS_H + 36)
+        if docked:
+            canvas_wrap.pack(fill="x", padx=14, pady=4, **before)
+            canvas_wrap.grid_propagate(False)
+        else:
+            # =300: 別ウィンドウでは図が全面(ウィンドウの大きさに追従)
+            canvas_wrap.pack(fill="both", expand=True, padx=8, pady=(4, 8))
+        canvas_wrap.grid_rowconfigure(0, weight=1)
+        canvas_wrap.grid_columnconfigure(0, weight=1)
+        self.canvas_wrap = canvas_wrap
+        self.canvas = tk.Canvas(canvas_wrap, height=self.CANVAS_H, bg=CANVAS_BG,
+                                highlightthickness=0)
+        # スクロールバーは下部の編集パネル(CTkScrollableFrame)と見た目を
+        # 揃えるため、素の tk.Scrollbar ではなく customtkinter の
+        # CTkScrollbar(角丸のモダン表示)を tk.Canvas に接続して使う。
+        hbar = ctk.CTkScrollbar(canvas_wrap, orientation="horizontal",
+                                command=self.canvas.xview)
+        vbar = ctk.CTkScrollbar(canvas_wrap, orientation="vertical",
+                                command=self.canvas.yview)
+        self.canvas.configure(xscrollcommand=hbar.set, yscrollcommand=vbar.set)
+        self.canvas.grid(row=0, column=0, sticky="nsew", padx=(6, 0), pady=(6, 0))
+        vbar.grid(row=0, column=1, sticky="ns", pady=(6, 2), padx=(2, 4))
+        hbar.grid(row=1, column=0, sticky="ew", padx=(6, 0), pady=(2, 6))
+        self.canvas_hbar = hbar
+        self.canvas_vbar = vbar
+        # =285: 高さ変更の取っ手(図の枠の直下・上下ドラッグ)。=300: 別
+        # ウィンドウでは無し(map_sash は None)
+        self.map_sash = None
+        if docked:
+            self.map_sash = ctk.CTkFrame(parent, height=7, corner_radius=3,
+                                         fg_color=("gray80", "gray28"),
+                                         cursor="sb_v_double_arrow")
+            self.map_sash.pack(fill="x", padx=200, pady=(0, 2),
+                               after=canvas_wrap)
+            for w in (self.map_sash,):
+                w.bind("<ButtonPress-1>", self._on_map_sash_press)
+                w.bind("<B1-Motion>", self._on_map_sash_drag)
+                w.bind("<ButtonRelease-1>", self._on_map_sash_release)
+        self._sash_y0 = None
+        # マウスホイール: 通常=縦、Shift+ホイール=横
+        self.canvas.bind(
+            "<MouseWheel>",
+            lambda e: self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
+        self.canvas.bind(
+            "<Shift-MouseWheel>",
+            lambda e: self.canvas.xview_scroll(-1 if e.delta > 0 else 1, "units"))
+        self.canvas.bind(   # Linux(X11)のホイールは Button-4/5
+            "<Button-4>", lambda e: self.canvas.yview_scroll(-1, "units"))
+        self.canvas.bind(
+            "<Button-5>", lambda e: self.canvas.yview_scroll(1, "units"))
+
+
     # ---- イベント遷移図の折りたたみ(=58) ----
 
     MAP_CFG_KEY = "editor_map_open"
@@ -9691,6 +9860,8 @@ class ScenarioEditor(ctk.CTkToplevel):
 
     def _apply_map_open(self):
         """図の表示/非表示とトグルのラベルを現在の状態に合わせる。"""
+        if self._map_undocked:
+            return                # =300: 別ウィンドウ中は常に表示(折りたたみ無し)
         if self._map_open:
             # =255: 表記を「▼ 折りたたみ」/「▶ 折りたたみ中」へ変更(Q3)
             self.map_toggle_btn.configure(text=tr("▼ 折りたたみ"))
@@ -9704,12 +9875,111 @@ class ScenarioEditor(ctk.CTkToplevel):
                 self.map_fit_btn.pack(side="left", padx=(8, 0))
             if not self.map_mode_btn.winfo_manager():     # =299
                 self.map_mode_btn.pack(side="left", padx=(8, 0))
+            if not self.map_undock_btn.winfo_manager():   # =300
+                self.map_undock_btn.pack(side="left", padx=(8, 0))
         else:
             self.map_toggle_btn.configure(text=tr("▶ 折りたたみ中"))
             self.canvas_wrap.pack_forget()
             self.map_sash.pack_forget()   # =285
             self.map_fit_btn.pack_forget()
             self.map_mode_btn.pack_forget()
+            self.map_undock_btn.pack_forget()
+
+    # ---- =300: イベント遷移図のドッキング解除(別ウィンドウ) ----
+    #
+    # 2段目バー(イベント追加〜インポート・元に戻す/やり直す・配置)と図だけを
+    # 別ウィンドウへ出す。タイトル行・イベントのパラメータ・ステート図・
+    # チャンネルは編集画面に残る(ユーザー決定)。解除中の編集画面側は
+    # 2段目バーごと消す。折りたたみ/自動フィット/取っ手は別ウィンドウには
+    # 無い。topmost にはしない(独立して動かせ、最小化もできる)。解除状態と
+    # ウィンドウの位置・大きさはコンフィグに記憶(次回も同じ状態で開く)。
+    MAP_UNDOCK_CFG_KEY = "editor_map_undocked"
+    MAP_WIN_KEY = "editor_map"           # winstate の保存キー
+    MAP_WIN_W, MAP_WIN_H = 800, 500      # 別ウィンドウの既定サイズ
+
+    def _destroy_map_area(self):
+        for w in (getattr(self, "map_sash", None),
+                  getattr(self, "canvas_wrap", None),
+                  getattr(self, "map_bar", None)):
+            if w is not None:
+                try:
+                    w.destroy()
+                except Exception:
+                    pass
+        self.map_sash = None
+
+    def _undock_map(self, *, save: bool = True):
+        if self._map_undocked:
+            return
+        self._map_undocked = True
+        self._destroy_map_area()
+        win = ctk.CTkToplevel(self)
+        win.title(tr("イベント遷移図") + " - " + (self.title_var.get() or ""))
+        self.map_win = win
+        self.map_winmem = WindowMemory(win, self.MAP_WIN_KEY)
+        if not self.map_winmem.restore():
+            try:
+                x = self.winfo_rootx() + 40
+                y = self.winfo_rooty() + 40
+            except Exception:
+                x, y = 60, 60
+            win.geometry(f"{self.MAP_WIN_W}x{self.MAP_WIN_H}+{x}+{y}")
+        win.minsize(420, 240)
+        self._build_map_area(win, docked=False)
+        self.map_winmem.watch()
+        self.map_winmem.install_close_hook(self._dock_map)   # ×=ドッキング
+        self._refresh_map_mode_btn()
+        self._redraw_canvas()
+        if save:
+            cfg = load_config()
+            cfg[self.MAP_UNDOCK_CFG_KEY] = True
+            save_config(cfg)
+
+    def _dock_map(self, *, save: bool = True):
+        if not self._map_undocked:
+            return
+        self._map_undocked = False
+        win = getattr(self, "map_win", None)
+        mem = getattr(self, "map_winmem", None)
+        if mem is not None:
+            try:
+                mem.save_now()
+            except Exception:
+                pass
+        self._destroy_map_area()
+        self.map_win = None
+        self.map_winmem = None
+        if win is not None:
+            try:
+                win.destroy()
+            except Exception:
+                pass
+        self._build_map_area(self, docked=True)
+        self._apply_map_fit_style()
+        self._apply_map_open()
+        self._refresh_map_mode_btn()
+        self._redraw_canvas()
+        self._apply_map_height()
+        if save:
+            cfg = load_config()
+            cfg[self.MAP_UNDOCK_CFG_KEY] = False
+            save_config(cfg)
+
+    def destroy(self):
+        # =300: 別ウィンドウの位置・大きさを保存してから閉じる
+        mem = getattr(self, "map_winmem", None)
+        if mem is not None:
+            try:
+                mem.save_now()
+            except Exception:
+                pass
+        super().destroy()
+
+    def _init_map_undock(self):
+        """コンフィグに「解除したまま」が残っていれば起動時に別ウィンドウで開く。"""
+        cfg = load_config()
+        if cfg.get(self.MAP_UNDOCK_CFG_KEY) is True:
+            self._undock_map(save=False)
 
     # ---- イベント遷移図の自動フィット(=72) ----
     #
@@ -9768,6 +10038,8 @@ class ScenarioEditor(ctk.CTkToplevel):
 
     def _apply_map_height(self):
         """現在の設定(手動高さ/自動フィット)に合わせて図の高さを反映する。"""
+        if getattr(self, "_map_undocked", False):
+            return                # =300: 別ウィンドウは fill=both で追従
         h = getattr(self, "_map_manual_h", None) or self.CANVAS_H
         if getattr(self, "_map_fit", False):
             h = max(self.CANVAS_H, self._map_content_height())
@@ -9935,132 +10207,11 @@ class ScenarioEditor(ctk.CTkToplevel):
         # (ユーザー決定。ヘルプは編集画面から独立=視聴だけの人にも届く場所へ)。
         # 編集画面からは開けなくなったが、`_open_help()` は互換のため残す。
 
-        # 2段目: イベント操作+インポート+図の折りたたみ(=255でmap_bar統合)
-        bar = ctk.CTkFrame(self, fg_color="transparent")
-        bar.pack(fill="x", padx=14, pady=(0, 0))
-        ctk.CTkButton(bar, text=tr("＋ イベント追加"), width=110, height=30,
-                      fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                      command=self._add_event).pack(side="left", padx=4)
-        ctk.CTkButton(bar, text=tr("イベント削除"), width=110, height=30,
-                      fg_color="transparent", border_width=1,
-                      border_color="#e05a5a", text_color="#e05a5a",
-                      hover_color=("gray85", "gray25"),
-                      command=self._delete_event).pack(side="left", padx=4)
-        ctk.CTkButton(bar, text=tr("イベントコピー"), width=110, height=30,
-                      fg_color="transparent", border_width=1,
-                      border_color=MUTED, text_color=("gray20", "gray85"),
-                      hover_color=("gray85", "gray25"),
-                      command=self._copy_event).pack(side="left", padx=4)
-        self.tool_sep = _toolbar_sep(bar)
-        ctk.CTkButton(bar, text=tr("インポート"), width=100, height=30,
-                      fg_color="transparent", border_width=1,
-                      border_color=MUTED, text_color=("gray20", "gray85"),
-                      hover_color=("gray85", "gray25"),
-                      command=self._open_import_dialog).pack(side="left", padx=4)
-        # =277: 元に戻す/やり直す(履歴が無いときは無効表示)
-        _toolbar_sep(bar)
-        self.undo_btn = ctk.CTkButton(
-            bar, text=tr("↶ 元に戻す"), width=100, height=30,
-            fg_color="transparent", border_width=1,
-            border_color=MUTED, text_color=("gray20", "gray85"),
-            hover_color=("gray85", "gray25"),
-            command=self._undo)
-        self.undo_btn.pack(side="left", padx=4)
-        self.redo_btn = ctk.CTkButton(
-            bar, text=tr("↷ やり直す"), width=100, height=30,
-            fg_color="transparent", border_width=1,
-            border_color=MUTED, text_color=("gray20", "gray85"),
-            hover_color=("gray85", "gray25"),
-            command=self._redo)
-        self.redo_btn.pack(side="left", padx=4)
-        # Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z。Toplevel への bind は配下の全
-        # ウィジェット(bindtags にトップレベルを含む)で効く
-        self.bind("<Control-z>", lambda e: self._undo() or "break")
-        self.bind("<Control-y>", lambda e: self._redo() or "break")
-        self.bind("<Control-Z>", lambda e: self._redo() or "break")
-        # 図の折りたたみトグル(=58)+自動フィット(=72)。=255でこの段へ統合
-        # (旧・図直上の細い行 map_bar は廃止。表記も「▼ 折りたたみ」/
-        # 「▶ 折りたたみ中」へ変更=Q3)。区切り線は挟まない(テキストリンク調
-        # で見た目が違うため=Q5)。canvas_wrap の pack アンカーとして
-        # self.map_bar 名は維持する。
-        self.map_bar = bar
-        self.map_toggle_btn = ctk.CTkButton(
-            bar, text="", width=110, height=18,
-            font=ctk.CTkFont(size=11), anchor="w",
-            fg_color="transparent", text_color=TEXT_MUTED,
-            hover_color=("gray85", "gray25"),
-            command=self._toggle_map)
-        self.map_toggle_btn.pack(side="left", padx=(10, 0))
-        self.map_fit_btn = ctk.CTkButton(
-            bar, text=tr("図の高さに合わせる"), width=120, height=18,
-            font=ctk.CTkFont(size=11), anchor="w",
-            fg_color="transparent", border_width=0, text_color=TEXT_MUTED,
-            hover_color=("gray85", "gray25"),
-            command=self._toggle_map_fit)
-        # =299: 配置モード(自動/手動)。「図の高さに合わせる」の右隣
-        self.map_mode_btn = ctk.CTkButton(
-            bar, text="", width=96, height=18,
-            font=ctk.CTkFont(size=11), anchor="w",
-            fg_color="transparent", border_width=0, text_color=TEXT_MUTED,
-            hover_color=("gray85", "gray25"),
-            command=self._toggle_map_mode)
-        # ウィンドウのリサイズで自動フィットの天井を追従させる(=72)
-        self.bind("<Configure>", self._on_win_configure, add="+")
-
-        # (=255: タイトルラベルは1段目 head_bar 内へ、折りたたみトグルと
-        #  「図の高さに合わせる」は2段目 bar 内へ統合済み)
-
-        # キャンバス(イベントの数珠つなぎ)。イベントが増えて図が画面外に
-        # 伸びても見られるよう、縦横スクロールバーを付ける(grid配置)。
-        # 高さは=58で170→110へ(1600x900のデスクトップ対応)。
-        # CTkFrame は既定で 200px の高さを要求するので、grid_propagate(False)
-        # + 明示の height で「キャンバス高さ+スクロールバー」に固定する
-        # (=58。これをしないと CANVAS_H を下げても枠が縮まない)。
-        canvas_wrap = ctk.CTkFrame(self, corner_radius=10,
-                                   height=self.CANVAS_H + 36)
-        canvas_wrap.pack(fill="x", padx=14, pady=4)
-        canvas_wrap.grid_propagate(False)
-        canvas_wrap.grid_rowconfigure(0, weight=1)
-        canvas_wrap.grid_columnconfigure(0, weight=1)
-        self.canvas_wrap = canvas_wrap
-        self.canvas = tk.Canvas(canvas_wrap, height=self.CANVAS_H, bg=CANVAS_BG,
-                                highlightthickness=0)
-        # スクロールバーは下部の編集パネル(CTkScrollableFrame)と見た目を
-        # 揃えるため、素の tk.Scrollbar ではなく customtkinter の
-        # CTkScrollbar(角丸のモダン表示)を tk.Canvas に接続して使う。
-        hbar = ctk.CTkScrollbar(canvas_wrap, orientation="horizontal",
-                                command=self.canvas.xview)
-        vbar = ctk.CTkScrollbar(canvas_wrap, orientation="vertical",
-                                command=self.canvas.yview)
-        self.canvas.configure(xscrollcommand=hbar.set, yscrollcommand=vbar.set)
-        self.canvas.grid(row=0, column=0, sticky="nsew", padx=(6, 0), pady=(6, 0))
-        vbar.grid(row=0, column=1, sticky="ns", pady=(6, 2), padx=(2, 4))
-        hbar.grid(row=1, column=0, sticky="ew", padx=(6, 0), pady=(2, 6))
-        self.canvas_hbar = hbar
-        self.canvas_vbar = vbar
-        # =285: 高さ変更の取っ手(図の枠の直下・上下ドラッグ)
-        self.map_sash = ctk.CTkFrame(self, height=7, corner_radius=3,
-                                     fg_color=("gray80", "gray28"),
-                                     cursor="sb_v_double_arrow")
-        self.map_sash.pack(fill="x", padx=200, pady=(0, 2), after=canvas_wrap)
-        for w in (self.map_sash,):
-            w.bind("<ButtonPress-1>", self._on_map_sash_press)
-            w.bind("<B1-Motion>", self._on_map_sash_drag)
-            w.bind("<ButtonRelease-1>", self._on_map_sash_release)
-        self._sash_y0 = None
         self._init_map_manual_height()
-        # マウスホイール: 通常=縦、Shift+ホイール=横
-        self.canvas.bind(
-            "<MouseWheel>",
-            lambda e: self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
-        self.canvas.bind(
-            "<Shift-MouseWheel>",
-            lambda e: self.canvas.xview_scroll(-1 if e.delta > 0 else 1, "units"))
-        self.canvas.bind(   # Linux(X11)のホイールは Button-4/5
-            "<Button-4>", lambda e: self.canvas.yview_scroll(-1, "units"))
-        self.canvas.bind(
-            "<Button-5>", lambda e: self.canvas.yview_scroll(1, "units"))
-
+        self._map_undocked = False
+        self.map_win = None
+        self.map_winmem = None
+        self._build_map_area(self, docked=True)
         # 画面内メッセージ/エラー領域(モーダルダイアログ+警告音の代替)。
         # 先に生成しておき、パネルより下(side=bottom)へ差し込む。
         self._build_msg_area()
@@ -12213,8 +12364,10 @@ class ScenarioEditor(ctk.CTkToplevel):
         # =277: 構造操作(追加/削除/リネーム/コピー/変数・監視/背景 等)は
         # 最後に必ずここを通るので、履歴チェックポイントを置く
         self._hist_check()
-        # =58: 折りたたみ中は描かない(開いたときに _toggle_map が描き直す)
-        if not getattr(self, "_map_open", True):
+        # =58: 折りたたみ中は描かない(開いたときに _toggle_map が描き直す)。
+        # =300: 別ウィンドウ中は常に描く
+        if not getattr(self, "_map_open", True) \
+                and not getattr(self, "_map_undocked", False):
             return
         # 実体は scenario_map.draw_event_map(再生タブの表示専用ビューと共用)
         _smap.draw_event_map(
