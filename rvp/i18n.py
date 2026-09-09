@@ -291,10 +291,11 @@ EN: dict[str, str] = {
     "左（ロータ1）": "L (rotor 1)",
     "右（ロータ2）": "R (rotor 2)",
     # =233: 縦軸を回転速度(-100〜100)表記にしたので「中央0=停止」へ
-    "csv(ROTATE): 中央0=停止 ／ 上=正回転 ／ 下=逆回転（速度は2刻み） ／ "
+    # =297: 分解能 200 で速度 1 刻みになったので「2刻み」の注記を外した
+    "csv(ROTATE): 中央0=停止 ／ 上=正回転 ／ 下=逆回転 ／ "
     "次の点まで同じ値を保ちます ／ 時刻は100ms単位です":
         "csv (ROTATE): 0 = stop / up = forward / down = reverse "
-        "(speed in steps of 2) / each value is held until the next point / "
+        "/ each value is held until the next point / "
         "times are in 100 ms units",
     "（csvではパターンの記憶は保存されません。開き直すと点だけになります）":
         "(csv cannot store pattern memory; reopening leaves only the points)",

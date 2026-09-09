@@ -6907,12 +6907,31 @@ class ItemReviewDialog(ctk.CTkToplevel):
         rotate(csv も funscript も)= 定義どおりの高さで固定・中心 50。
         vib = 定義どおりの高さで固定・基準 0。
         """
+        return self._pat_mode_of(self._edit_type)
+
+    @staticmethod
+    def _pat_mode_of(ttype: str) -> str:
         from . import script_edit
-        if self._edit_type in SCRIPT_EDIT_CSV_TYPES:
+        if ttype in SCRIPT_EDIT_CSV_TYPES:
             return script_edit.PAT_MODE_ROTATE
-        if self._edit_type == "vibration":
+        if ttype == "vibration":
             return script_edit.PAT_MODE_VIB
         return script_edit.PAT_MODE_LINEAR
+
+    def _edit_pos_max(self) -> int:
+        """=297: 編集モデルの pos 分解能。csv=200(速度 1 刻み) / それ以外 100。"""
+        from . import script_edit
+        return script_edit.CSV_POS_MAX \
+            if getattr(self, "_edit_kind", "funscript") == "csv" else 100
+
+    def _pat_center_scaled(self, mode: str):
+        """=297: PAT_CENTERS(0〜100 定義)を編集モデルの分解能へ換算した中心。
+        ROTATE: funscript=50 / csv=100。VIBRATION=0。linear/twist=None。"""
+        from . import script_edit
+        c = script_edit.PAT_CENTERS.get(mode)
+        if c is None:
+            return None
+        return int(round(c * self._edit_pos_max() / 100.0))
 
     def _std_patterns(self) -> tuple:
         """いま使う標準パターンのカタログ(=226。モードで切り替わる)。"""
@@ -6937,17 +6956,20 @@ class ItemReviewDialog(ctk.CTkToplevel):
             # 警告(ヒートマップ)は linear/twist のときだけ意味を持つ
             g.heat = not step
             g.round_interior = csv
+        mode = self._pat_mode()
+        # =297: csv は分解能 200(中心 100)。パターンの中心も分解能に合わせる
+        center = self._pat_center_scaled(mode)
         for m in self.edit_models:
+            m.pos_max = self._edit_pos_max()
             m.round_interior = csv
             m.step_mode = step
-            m.pat_center = script_edit.PAT_CENTERS.get(self._pat_mode())
+            m.pat_center = center
         g = self.edit_graph
         # =226: 離散的なスクリプトのパターン規則
-        #  ・定義どおりの高さで固定(ROTATE=中心50 / VIBRATION=基準0)
+        #  ・定義どおりの高さで固定(ROTATE=中心50(csv は 100) / VIBRATION=基準0)
         #  ・接続配置なし / 隣接パターンの追従なし
-        mode = self._pat_mode()
         for g2 in self.edit_graphs:
-            g2.pat_center = script_edit.PAT_CENTERS.get(mode)
+            g2.pat_center = center
             g2.pat_follow = mode == script_edit.PAT_MODE_LINEAR
             g2.pat_connect = mode == script_edit.PAT_MODE_LINEAR
         # 標準パターンのカタログとボタンの絵を差し替える(モードで変わる)
@@ -6998,12 +7020,15 @@ class ItemReviewDialog(ctk.CTkToplevel):
             self.grid_at_var.set(script_edit.grid_at_label(
                 script_edit.CSV_AT_UNIT if csv
                 else script_edit.GRID_AT_DEFAULT, none_lbl))
+        # =297: csv は分解能 200(速度 1 刻み)なので、「回転速度:」グリッドの
+        # 選択肢(20/10/5/2/なし)はそのまま速度単位になる(=296 の速度換算
+        # 表示は不要になり撤回)。
         self._on_grid_change()
         # 読み方の案内(パレットの下)。csv / ROTATE / VIBRATION で文言を変える
         text = ""
         if csv:
             text = tr("csv(ROTATE): 中央0=停止 ／ 上=正回転 ／ 下=逆回転"
-                      "（速度は2刻み） ／ 次の点まで同じ値を保ちます ／ "
+                      " ／ 次の点まで同じ値を保ちます ／ "
                       "時刻は100ms単位です")
         elif self._edit_type in SCRIPT_EDIT_CSV_TYPES:
             text = tr("ROTATE: 中央50=停止 ／ 上=正回転 ／ 下=逆回転 ／ "
@@ -7431,7 +7456,7 @@ class ItemReviewDialog(ctk.CTkToplevel):
         self.edit_csv_hint = ctk.CTkLabel(
             inner,
             text=tr("csv(ROTATE): 中央0=停止 ／ 上=正回転 ／ 下=逆回転"
-                    "（速度は2刻み） ／ 次の点まで同じ値を保ちます ／ "
+                    " ／ 次の点まで同じ値を保ちます ／ "
                     "時刻は100ms単位です"),
             font=ctk.CTkFont(size=11), text_color=ACCENT_TEXT, anchor="w")
         self.edit_hint_label = ctk.CTkLabel(
@@ -7606,8 +7631,15 @@ class ItemReviewDialog(ctk.CTkToplevel):
                 _raw, pts = script_edit.load_funscript_raw(path)
         except Exception:
             pts = []
+        # =297: サブ表示も種別の分解能で読む(csv=200)
+        sub_max = script_edit.CSV_POS_MAX if ch is not None else 100
+        self.edit_sub_model.pos_max = sub_max
+        sub_c = script_edit.PAT_CENTERS.get(self._pat_mode_of(ttype))
+        self.edit_sub_model.pat_center = None if sub_c is None \
+            else int(round(sub_c * sub_max / 100.0))
         self.edit_sub_model.load(pts)
         g = self.edit_sub_graph
+        g.pat_center = self.edit_sub_model.pat_center
         # サブ側の作法(階段/ヒートマップ)は**その種別のもの**にする
         step = (ch is not None) or ttype in SCRIPT_EDIT_STEP_TYPES
         g.step = step
@@ -7689,6 +7721,7 @@ class ItemReviewDialog(ctk.CTkToplevel):
             self._set_edit_pair(self._edit_kind == "csv"
                                 and self._edit_cols == 5)
             for _m in self._edit_models:
+                _m.pos_max = self._edit_pos_max()     # =297: load の前に
                 _m.load([])
         else:
             self._edit_new = False
@@ -7697,13 +7730,16 @@ class ItemReviewDialog(ctk.CTkToplevel):
             self._edit_path = path
             self._edit_extra = None
             self._edit_kind = "csv" if (ch is not None) else "funscript"
+            for _m in self._edit_models:
+                _m.pos_max = self._edit_pos_max()     # =297: load の前に
             pair = self._csv_is_2ch(ch)         # =232: 5列=左右同時編集
             self._edit_csv_ch = 0 if pair else (ch or 0)
             self._edit_csv_other = []
             self._edit_cols = 3
             pts = []
             if self._edit_kind == "csv":
-                # =224: csv(ROTATE)。pos 50=停止 / 100=正回転 / 0=逆回転。
+                # =224: csv(ROTATE)。=297: pos 100=停止 / 200=正回転 /
+                # 0=逆回転(分解能 200=速度 1 刻み)。
                 # **=232: 5列は左右2本を同時に読み込む**(片方を保持して
                 # 保存へ回す `_edit_csv_other` の受け渡しは不要になった)。
                 other = []
@@ -7853,14 +7889,17 @@ class ItemReviewDialog(ctk.CTkToplevel):
         return int(round(v))
 
     def _pos_to_entry(self, pos: int) -> str:
+        from . import script_edit
         if self._entry_is_csv():
-            return str(int(round((int(pos) - 50) * 2)))   # -100〜100
+            # =297: 分解能 200(中心 100)なので速度 = pos - 100(1 刻み)
+            return str(int(pos) - script_edit.CSV_STOP_POS)   # -100〜100
         return str(pos)
 
     def _pos_from_entry(self, txt: str) -> int:
+        from . import script_edit
         v = float(txt)
         if self._entry_is_csv():
-            v = 50.0 + max(-100.0, min(100.0, v)) / 2.0
+            v = script_edit.CSV_STOP_POS + max(-100.0, min(100.0, v))
         return int(round(v))
 
     def _edit_on_select(self):
@@ -8141,7 +8180,7 @@ class ItemReviewDialog(ctk.CTkToplevel):
     def _on_pos_key(self, pos: int):
         """0〜9 と + キー: 今の再生位置(+時間補正)へ点を打つ(=223)。
 
-        pos は 0/10/…/90/100。時間[at]グリッドへ吸着する。重なるパターンは
+        pos は 0/10/…/90/100(csv は 2 倍=297)。時間[at]グリッドへ吸着する。重なるパターンは
         丸ごと消して打つ(ユーザー決定=要望1と同じ「後から置くものを優先」)。
         再生は止めない。1回の打点が UNDO 1ステップ。
         """
@@ -8154,6 +8193,9 @@ class ItemReviewDialog(ctk.CTkToplevel):
         g = self.edit_graph
         at = script_edit.snap(max(0.0, self._now_ms() + self._time_adj_ms()),
                               g.grid_at)
+        # =297: csv(分解能 200)では 0〜9/+ を 0/20/…/200(=速度 -100〜+100
+        # の 20 刻み)にする(ユーザー決定)
+        pos = int(round(int(pos) * self._edit_pos_max() / 100.0))
         r = self.edit_model.place_point_over(int(at), int(pos))
         if r == "ok":
             g.sel_pattern = None
@@ -8515,7 +8557,9 @@ class ItemReviewDialog(ctk.CTkToplevel):
         model = self.edit_model
         pat = ctx.get("pattern")
         multi = bool(ctx.get("multi"))
-        center = self.edit_graph.pat_center   # None=linear/twist / 50 / 0
+        center = self.edit_graph.pat_center   # None=linear/twist / 中央 / 0
+        # =297: rotate 系の中心は funscript=50 / csv=100。「0 でない」=rotate
+        rotate = center is not None and center > 0
         menu = tk.Menu(self, tearoff=0)
         if pat is not None and not multi:
             # パターン上の右クリック(仕様 3c/6b。=241 で反転を再編)
@@ -8525,7 +8569,7 @@ class ItemReviewDialog(ctk.CTkToplevel):
                 menu.add_command(
                     label=tr("上下反転(パターン内)"),
                     command=lambda: self._menu_flip_v(False))
-            elif center == 50:
+            elif rotate:
                 # rotate系: 回転方向の反転(速度は維持)=全幅のみ
                 menu.add_command(label=tr("上下反転"),
                                  command=lambda: self._menu_flip_v(True))
@@ -8550,7 +8594,7 @@ class ItemReviewDialog(ctk.CTkToplevel):
                 menu.add_command(
                     label=tr("上下反転(選択内)"),
                     command=lambda: self._menu_flip_v(False))
-            elif center == 50:
+            elif rotate:
                 menu.add_command(label=tr("上下反転"),
                                  command=lambda: self._menu_flip_v(True))
             menu.add_command(label=tr("左右反転"),
@@ -8564,9 +8608,10 @@ class ItemReviewDialog(ctk.CTkToplevel):
             menu.grab_release()
 
     def _menu_flip_v(self, full: bool):
-        """=241: 上下反転。full=True は全幅(軸=pos50)、False は
-        選択全体の min〜max の中点が軸。空振りの理由を表示する。"""
-        res = self.edit_model.flip_vertical(50.0 if full else None)
+        """=241: 上下反転。full=True は全幅(軸=中央。=297: csv は pos100)、
+        False は選択全体の min〜max の中点が軸。空振りの理由を表示する。"""
+        res = self.edit_model.flip_vertical(
+            self._edit_pos_max() / 2.0 if full else None)
         if res == "ok":
             self._edit_on_change()
             self._edit_on_select()

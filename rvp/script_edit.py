@@ -150,6 +150,16 @@ def grid_label(step: int, unit_none: str) -> str:
     return unit_none if step <= 1 else tr("{0}単位").format(step)
 
 
+def scale_shape(shape, pos_max: int):
+    """=297: 0〜100 で定義されたパターン(標準/ユーザー)を pos_max の
+    分解能へ縦に伸ばす(csv=200 なら 2 倍・中心 50→100)。100 のときは
+    そのまま返す。"""
+    f = int(pos_max) / 100.0
+    if abs(f - 1.0) < 1e-9:
+        return tuple(shape)
+    return tuple((t, int(round(p * f))) for t, p in shape)
+
+
 def grid_at_label(step: int, unit_none: str) -> str:
     """時間[at]グリッドの表示文字列(=208: 秒表記で分かりやすく)。
 
@@ -168,7 +178,7 @@ def snap(value: float, grid: int) -> int:
 
 
 def moved_points(points, selection, dat: float, dpos: float,
-                 grid_at: int, grid_pos: int):
+                 grid_at: int, grid_pos: int, pos_max: int = 100):
     """選択中の点を (dat, dpos) だけ動かした結果を計算する純関数。
 
     移動の**結果**を最寄りの格子へ丸める(仕様 4.5。元から格子外の点も
@@ -187,7 +197,7 @@ def moved_points(points, selection, dat: float, dpos: float,
         if at not in sel:
             continue
         na = snap(max(0.0, at + dat), grid_at)
-        np_ = max(0, min(100, snap(pos + dpos, grid_pos)))
+        np_ = max(0, min(pos_max, snap(pos + dpos, grid_pos)))
         mapping[at] = (na, np_)
         if na in others or na in new_ats:
             ok = False
@@ -389,8 +399,8 @@ def shape_ds(shape) -> list:
     return [p - _endline(shape, t / length) for t, p in shape]
 
 
-def solve_k(shape, b0: float, b1: float) -> float:
-    """変換後の全点が 0〜100 に収まる最大の k(上限 K_MAX)。
+def solve_k(shape, b0: float, b1: float, pos_max: int = 100) -> float:
+    """変換後の全点が 0〜pos_max に収まる最大の k(上限 K_MAX)。
 
     基準線 = b0→b1(u の一次)。d はパターン自身の端線からのふくらみ。
     d=0 の点は制約を課さない。判定の基準は 0〜100 全体(仕様 5.5)。
@@ -400,7 +410,7 @@ def solve_k(shape, b0: float, b1: float) -> float:
     for (t, _p), d in zip(shape, shape_ds(shape)):
         base = b0 + (b1 - b0) * (t / length)
         if d > 1e-9:
-            k = min(k, (100.0 - base) / d)
+            k = min(k, (float(pos_max) - base) / d)
         elif d < -1e-9:
             k = min(k, (0.0 - base) / d)
     return k
@@ -409,7 +419,7 @@ def solve_k(shape, b0: float, b1: float) -> float:
 def transform_pattern(shape, A: float, s: float, k: float,
                       b0: float, b1: float, grid_at: int, grid_pos: int,
                       fix_left: bool = False, fix_right: bool = False,
-                      round_interior: bool = False):
+                      round_interior: bool = False, pos_max: int = 100):
     """パターンを配置座標へ変換する(仕様 5.5 の式)。
 
     - 端点は基準線の両端 (A, b0) / (A+s·L, b1) にちょうど載る(d=0)。
@@ -422,7 +432,8 @@ def transform_pattern(shape, A: float, s: float, k: float,
       速度は pos がそのまま効く)。丸めで同じ時刻へ潰れた点は**次の格子へ
       前送り**して単調増加を保ち、末尾(端点)に届いてしまう=詰め切れない
       ときだけ不成立にする。
-    - pos は 0〜100 でクランプ。整数化の結果 at が重複したら None。
+    - pos は 0〜pos_max でクランプ(=297: csv は 200)。整数化の結果 at が
+      重複したら None。
     戻り値: [(at, pos)](at 昇順)。
     """
     length = shape_len(shape)
@@ -441,7 +452,7 @@ def transform_pattern(shape, A: float, s: float, k: float,
         else:
             at = snap(at_f, grid_at)
         pos = int(round(pos_f))
-        pos = max(0, min(100, pos))
+        pos = max(0, min(int(pos_max), pos))
         out.append((at, pos))
     if round_interior and len(out) > 2:
         # =224: 丸めで潰れた内側の点を次の格子へ前送りする(単調増加)
@@ -458,9 +469,11 @@ def transform_pattern(shape, A: float, s: float, k: float,
 
 
 def _plan(shape, A, s, k, b0, b1, grid_at, grid_pos,
-          fix_left=False, fix_right=False, round_interior=False):
+          fix_left=False, fix_right=False, round_interior=False,
+          pos_max=100):
     pts = transform_pattern(shape, A, s, k, b0, b1, grid_at, grid_pos,
-                            fix_left, fix_right, round_interior)
+                            fix_left, fix_right, round_interior,
+                            pos_max=pos_max)
     if pts is None:
         return None
     return {"points": pts, "A": float(A), "s": float(s), "k": float(k),
@@ -470,7 +483,7 @@ def _plan(shape, A, s, k, b0, b1, grid_at, grid_pos,
 def plan_normal(shape, A: float, grid_at: int, grid_pos: int,
                 s: float = 1.0, k: float = 1.0,
                 b0: float | None = None, b1: float | None = None,
-                round_interior: bool = False):
+                round_interior: bool = False, pos_max: int = 100):
     """通常配置(仕様 5.3/5.5)。初期サイズは**定義どおり**(内側の点は
     グリッドへ丸めない=仕様 5.3)。b0/b1 を渡すと基準線を上下へずらした
     自由配置(移動 D&D 用)。"""
@@ -482,21 +495,21 @@ def plan_normal(shape, A: float, grid_at: int, grid_pos: int,
         b1 = float(shape[-1][1])
     if not (K_MIN - 1e-9 <= k <= K_STRETCH_MAX + 1e-9):
         return None
-    # 全点が 0〜100 に収まること(基準線をずらした自由配置のはみ出しを拒否)
+    # 全点が 0〜pos_max に収まること(基準線をずらした自由配置のはみ出しを拒否)
     length = shape_len(shape)
     for (t, _p), d in zip(shape, shape_ds(shape)):
         base = b0 + (b1 - b0) * (t / length)
         v = base + k * d
-        if v < -1e-6 or v > 100 + 1e-6:
+        if v < -1e-6 or v > pos_max + 1e-6:
             return None
     return _plan(shape, A, s, k, b0, b1, grid_at, grid_pos,
-                 round_interior=round_interior)
+                 round_interior=round_interior, pos_max=pos_max)
 
 
 def plan_connect_side(shape, side: str, a: float, q: float, s: float,
                       grid_at: int, grid_pos: int,
                       k_cap: float = K_MAX,
-                      round_interior: bool = False):
+                      round_interior: bool = False, pos_max: int = 100):
     """片側接続(仕様 5.5)。base=q(水平)、d=接続端からのずれ、k を解く。
 
     k_cap: k の上限(既定=K_MAX)。隣接追従・拡縮では**現在の k を保つ**
@@ -519,7 +532,7 @@ def plan_connect_side(shape, side: str, a: float, q: float, s: float,
     for _t, p in shape:
         d = p - dref
         if d > 1e-9:
-            k = min(k, (100.0 - q) / d)
+            k = min(k, (float(pos_max) - q) / d)
         elif d < -1e-9:
             k = min(k, (0.0 - q) / d)
     if k < K_MIN - 1e-9:
@@ -533,13 +546,13 @@ def plan_connect_side(shape, side: str, a: float, q: float, s: float,
         b0, b1 = q + k * (p0 - plast), q
     return _plan(shape, A, s, k, b0, b1, grid_at, grid_pos,
                  fix_left=(side == "left"), fix_right=(side == "right"),
-                 round_interior=round_interior)
+                 round_interior=round_interior, pos_max=pos_max)
 
 
 def plan_connect_both(shape, a1: float, q1: float, a2: float, q2: float,
                       grid_at: int, grid_pos: int,
                       k_cap: float = K_MAX,
-                      round_interior: bool = False):
+                      round_interior: bool = False, pos_max: int = 100):
     """両側接続(仕様 5.5)。base=q1→q2 の傾いた基準線、s=隙間へぴったり。
 
     k_cap: k の上限(既定=K_MAX)。隣接追従では現在の k を渡して
@@ -551,13 +564,13 @@ def plan_connect_both(shape, a1: float, q1: float, a2: float, q2: float,
     s = (a2 - a1) / length
     if not (S_MIN - 1e-9 <= s <= S_MAX + 1e-9):
         return None
-    k = solve_k(shape, q1, q2)
+    k = solve_k(shape, q1, q2, pos_max)
     if k < K_MIN - 1e-9:
         return None
     k = min(k, k_cap)
     return _plan(shape, a1, s, k, q1, q2, grid_at, grid_pos,
                  fix_left=True, fix_right=True,
-                 round_interior=round_interior)
+                 round_interior=round_interior, pos_max=pos_max)
 
 
 class ScriptEditModel:
@@ -601,6 +614,9 @@ class ScriptEditModel:
         # =226: 階段(離散)として扱うか。上書き配置の境目の規則が変わる
         # (前のパターンを消さず、境目の点だけ未来側のパターンへ譲る)
         self.step_mode = False
+        # =297: pos の上限(分解能)。funscript=100 / csv=200(速度1刻み:
+        # 下端=逆回転100 / 中央100=停止 / 上端=正回転100)。
+        self.pos_max = 100
         self._undo: list = []
         self._redo: list = []
         self.dirty = False
@@ -623,7 +639,7 @@ class ScriptEditModel:
             else:
                 at, pos = int(a[0]), int(a[1])
             if at >= 0:
-                pts[at] = max(0, min(100, pos))
+                pts[at] = max(0, min(self.pos_max, pos))
         self.points = sorted(pts.items())
         self.selection = set()
         self.clipboard = None
@@ -853,7 +869,7 @@ class ScriptEditModel:
         (=176 実機FB。クリックした pos へ打点し直せる)。
         パターンの構成点・パターンの時間範囲の内側は従来どおり拒否。"""
         at = int(at)
-        pos = max(0, min(100, int(pos)))
+        pos = max(0, min(self.pos_max, int(pos)))
         if at < 0 or self.at_blocked(at) or at in self.pattern_ats():
             return False
         if self.pos_of(at) == pos:
@@ -885,7 +901,8 @@ class ScriptEditModel:
         if not self.selection:
             return False
         mapping, ok = moved_points(self.points, self.selection,
-                                   dat, dpos, grid_at, grid_pos)
+                                   dat, dpos, grid_at, grid_pos,
+                                   pos_max=self.pos_max)
         if not ok:
             return False
         if any(self.at_blocked(na) for na, _ in mapping.values()):
@@ -911,7 +928,7 @@ class ScriptEditModel:
         if self.pos_of(at) is None:
             return False
         new_at = int(new_at)
-        new_pos = max(0, min(100, int(new_pos)))
+        new_pos = max(0, min(self.pos_max, int(new_pos)))
         if new_at < 0:
             return False
         if new_at != at and self.pos_of(new_at) is not None:
@@ -1120,7 +1137,7 @@ class ScriptEditModel:
         pos を書き換える。戻り値 "ok" / "range" / "same"。
         """
         at = int(at)
-        pos = max(0, min(100, int(pos)))
+        pos = max(0, min(self.pos_max, int(pos)))
         if at < 0:
             return "range"
         tol = self.edge_tol
@@ -1237,7 +1254,7 @@ class ScriptEditModel:
             na = a + dat_q
             np_ = self._scaled_pos(p, scale) if scale is not None \
                 else p + dpos_q
-            if na < 0 or np_ < 0 or np_ > 100 or na in static_ats:
+            if na < 0 or np_ < 0 or np_ > self.pos_max or na in static_ats:
                 return None
             for rec in static_pats:
                 if rec["ats"][0] - tol <= na <= rec["ats"][-1] + tol:
@@ -1252,7 +1269,7 @@ class ScriptEditModel:
                 np_ = self._scaled_pos(self.pos_of(a), scale) \
                     if scale is not None else self.pos_of(a) + dpos_q
                 na = a + dat_q
-                if np_ < 0 or np_ > 100 or na in static_ats:
+                if np_ < 0 or np_ > self.pos_max or na in static_ats:
                     return None
             for rec in static_pats:
                 if max(nlo, rec["ats"][0]) < min(nhi, rec["ats"][-1]):
@@ -1366,7 +1383,8 @@ class ScriptEditModel:
             if not a_far < nlo:
                 return None
             p = plan_connect_both(o["shape"], a_far, q_far, nlo, qlo,
-                                  grid_at, grid_pos, k_cap=o["k"])
+                                  grid_at, grid_pos, k_cap=o["k"],
+                                  pos_max=self.pos_max)
             if p is None:
                 return None
             out[left] = p
@@ -1377,7 +1395,8 @@ class ScriptEditModel:
             if not nhi < a_far:
                 return None
             p = plan_connect_both(o["shape"], nhi, qhi, a_far, q_far,
-                                  grid_at, grid_pos, k_cap=o["k"])
+                                  grid_at, grid_pos, k_cap=o["k"],
+                                  pos_max=self.pos_max)
             if p is None:
                 return None
             out[right] = p
@@ -1480,7 +1499,7 @@ class ScriptEditModel:
             if p is None:
                 return None
             na, np_ = a + dat, p + dpos
-            if na < 0 or np_ < 0 or np_ > 100:
+            if na < 0 or np_ < 0 or np_ > self.pos_max:
                 return None
             pts.append((na, np_))
         return {"points": pts, "A": rec["A"] + dat, "s": rec["s"],
@@ -1540,7 +1559,7 @@ class ScriptEditModel:
         changed = False
         for a in involved:
             np_ = _m(pos_map[a])
-            if np_ < 0 or np_ > 100:
+            if np_ < 0 or np_ > self.pos_max:
                 return "range"
             if np_ != pos_map[a]:
                 changed = True
@@ -1850,7 +1869,7 @@ class ScriptEditModel:
         new_pts = []
         for rel, p in (self.clipboard or ()):
             np_ = p + voff
-            if np_ < 0 or np_ > 100:
+            if np_ < 0 or np_ > self.pos_max:
                 return "range"
             new_pts.append((base + rel, np_))
         new_pats = []
@@ -1859,7 +1878,7 @@ class ScriptEditModel:
             pts = []
             for t, p in pc["shape"]:
                 np_ = int(round(p + voff))
-                if np_ < 0 or np_ > 100:
+                if np_ < 0 or np_ > self.pos_max:
                     return "range"
                 pts.append((lo + int(round(t)), np_))
             new_pats.append({"points": pts, "name": pc["name"]})
@@ -1885,6 +1904,7 @@ class ScriptEditModel:
         self.last_place_range = None
         if not shape or len(shape) < 2:
             return "grid"
+        shape = scale_shape(shape, self.pos_max)   # =297: 0〜100 定義→分解能
         if abs(scale - 1.0) > 1e-9:
             shape = tuple((t * scale, p) for t, p in shape)
         p0 = shape[0][1]
@@ -1894,12 +1914,13 @@ class ScriptEditModel:
         else:
             pmin = min(p for _t, p in shape)
             pmax = max(p for _t, p in shape)
-            target = max(0, min(100, base_pos))
-            off = max(-pmin, min(100 - pmax, target - p0))
+            target = max(0, min(self.pos_max, base_pos))
+            off = max(-pmin, min(self.pos_max - pmax, target - p0))
         A = snap(max(0.0, at0), grid_at)
         plan = plan_normal(shape, A, grid_at, grid_pos,
                            b0=p0 + off, b1=plast + off,
-                           round_interior=self.round_interior)
+                           round_interior=self.round_interior,
+                           pos_max=self.pos_max)
         if plan is None:
             return "grid"
         pts = plan["points"]
@@ -2303,26 +2324,29 @@ def write_funscript(path: str, points, extra: dict | None,
 #
 # csv は **階段(次の行までその値を保つ)** のタイムラインで、時刻は
 # **100ms単位**の整数、値は「方向(0=逆/1=正)+速度(0〜100)」。
-# 編集モデルは funscript と同じ (at, pos 0〜100) なので、
-# **pos 50=停止 / 100=正回転最大 / 0=逆回転最大**(レビュー画面のグラフ・
-# player._graph_points_rotate と同じ写像)へ相互変換して扱う(ユーザー決定)。
-# この写像では **速度は2刻み**(pos が1違うと速度が2違う)になる。
+# 編集モデルは funscript と同じ (at, pos) だが、**=297: csv は分解能 200**
+# (ScriptEditModel.pos_max=200)で扱う: **pos 100=停止 / 200=正回転(方向1)
+# 最大 / 0=逆回転(方向0)最大**。pos が 1 違うと速度が 1 違う(=224 の
+# 0〜100 写像では速度が 2 刻みになり、5 単位以下の調整ができなかった)。
+# レビュー画面の再生グラフ(player._graph_points_rotate)は表示専用なので
+# 従来の 0〜100 写像のまま。
 
 CSV_AT_UNIT = 100          # csv の時刻の単位(ms)
-CSV_STOP_POS = 50          # 停止の pos
+CSV_POS_MAX = 200          # =297: csv 編集モデルの pos 上限(分解能)
+CSV_STOP_POS = 100         # 停止の pos(=中央)
 
 
 def csv_pos_of(cw: bool, frac: float) -> int:
-    """(方向, 速度率0.0〜1.0) → pos 0〜100。"""
+    """(方向, 速度率0.0〜1.0) → pos 0〜200(=297)。"""
     f = max(0.0, min(1.0, float(frac)))
-    v = 50.0 + f * 50.0 if cw else 50.0 - f * 50.0
+    v = CSV_STOP_POS + f * 100.0 if cw else CSV_STOP_POS - f * 100.0
     return int(round(v))
 
 
 def csv_val_of(pos: int) -> tuple[int, int]:
-    """pos 0〜100 → (方向 0/1, 速度 0〜100)。停止(pos=50)の方向は 1。"""
-    d = int(max(0, min(100, int(pos)))) - 50
-    return (1 if d >= 0 else 0, int(abs(d) * 2))
+    """pos 0〜200 → (方向 0/1, 速度 0〜100)。停止(pos=100)の方向は 1。"""
+    d = int(max(0, min(CSV_POS_MAX, int(pos)))) - CSV_STOP_POS
+    return (1 if d >= 0 else 0, int(abs(d)))
 
 
 def csv_hold_pos(points, at: int) -> int:
@@ -2367,7 +2391,7 @@ def dump_csv(points, cols: int = 3, other=None, ch: int = 0) -> str:
     mine = {}
     for a, p in points:
         mine[int(round(a / CSV_AT_UNIT)) * CSV_AT_UNIT] = \
-            max(0, min(100, int(p)))
+            max(0, min(CSV_POS_MAX, int(p)))
     mine = sorted(mine.items())
     if cols == 3 or other is None:
         rows = [(a, csv_val_of(p)) for a, p in mine]
@@ -2376,7 +2400,7 @@ def dump_csv(points, cols: int = 3, other=None, ch: int = 0) -> str:
     oth = {}
     for a, p in other:
         oth[int(round(a / CSV_AT_UNIT)) * CSV_AT_UNIT] = \
-            max(0, min(100, int(p)))
+            max(0, min(CSV_POS_MAX, int(p)))
     oth = sorted(oth.items())
     ats = sorted({a for a, _p in mine} | {a for a, _p in oth})
     out = []
@@ -2678,6 +2702,16 @@ class ScriptEditGraph(tk.Canvas):
                 pass
             self._nudge_job = None
 
+    # ---- =297: pos の分解能はモデルが持つ(funscript=100 / csv=200) ----
+
+    @property
+    def pos_max(self) -> int:
+        return int(getattr(self.model, "pos_max", 100) or 100)
+
+    @property
+    def pos_center(self) -> float:
+        return self.pos_max / 2.0
+
     # ---- グリッド(=183: 端点の禁止帯をモデルへ同期) ----
 
     @property
@@ -2695,8 +2729,12 @@ class ScriptEditGraph(tk.Canvas):
     # ---- パターン配置・操作(P2 =173) ----
 
     def set_place_tool(self, shape, name) -> None:
-        """パターン配置ツールへ切り替える(shape=None で「点」へ戻る)。"""
-        self.place_shape = tuple(shape) if shape else None
+        """パターン配置ツールへ切り替える(shape=None で「点」へ戻る)。
+
+        =297: shape は 0〜100 定義(標準/ユーザーパターン)。モデルの分解能
+        (csv=200)へ縦に伸ばして持つ。"""
+        self.place_shape = scale_shape(shape, self.pos_max) if shape \
+            else None
         self.place_name = name if shape else None
         self.tool = "pattern" if shape else "point"
         self.sel_pattern = None
@@ -2864,7 +2902,7 @@ class ScriptEditGraph(tk.Canvas):
         x0, top, x1, bot = self._plot()
         if x0 <= event.x <= x1 and top <= event.y <= bot:
             cross = (snap(max(0.0, self.ms_of(event.x)), self.grid_at),
-                     max(0, min(100, snap(self.pos_of_y(event.y),
+                     max(0, min(self.pos_max, snap(self.pos_of_y(event.y),
                                           self.grid_pos))))
         else:
             cross = None
@@ -2895,7 +2933,7 @@ class ScriptEditGraph(tk.Canvas):
                 self._handle_hit(x, y) is not None:
             return None
         at = snap(max(0.0, self.ms_of(x)), self.grid_at)
-        pos = max(0, min(100, snap(self.pos_of_y(y), self.grid_pos)))
+        pos = max(0, min(self.pos_max, snap(self.pos_of_y(y), self.grid_pos)))
         if self.model.at_blocked(at) or at in self.model.pattern_ats():
             return None         # パターンの時間範囲・端点の禁止帯=打点不可
         if self.model.pos_of(at) == pos:
@@ -2941,10 +2979,12 @@ class ScriptEditGraph(tk.Canvas):
                     cands.append(plan_connect_both(
                         shape, a, q, er[1], er[2],
                         self.grid_at, self.grid_pos,
-                        round_interior=self.round_interior))
+                        round_interior=self.round_interior,
+                        pos_max=self.pos_max))
                 cands.append(plan_connect_side(
                     shape, "left", a, q, 1.0, self.grid_at, self.grid_pos,
-                    round_interior=self.round_interior))
+                    round_interior=self.round_interior,
+                    pos_max=self.pos_max))
             else:
                 lefts = [e for e in eps if e[1] < a]
                 if lefts:
@@ -2952,10 +2992,12 @@ class ScriptEditGraph(tk.Canvas):
                     cands.append(plan_connect_both(
                         shape, el[1], el[2], a, q,
                         self.grid_at, self.grid_pos,
-                        round_interior=self.round_interior))
+                        round_interior=self.round_interior,
+                        pos_max=self.pos_max))
                 cands.append(plan_connect_side(
                     shape, "right", a, q, 1.0, self.grid_at, self.grid_pos,
-                    round_interior=self.round_interior))
+                    round_interior=self.round_interior,
+                    pos_max=self.pos_max))
         # ③通常配置(接続不成立時のフォールバック=仕様 4-6)。
         # =177: クリックの高さを基準線(端の高さ)にする(グリッド吸着+
         # パターン全体が 0〜100 に収まる範囲へクランプ)
@@ -2969,12 +3011,13 @@ class ScriptEditGraph(tk.Canvas):
             off = 0
         else:
             target = p0 if pos is None else \
-                max(0, min(100, snap(pos, self.grid_pos)))
-            off = max(-pmin, min(100 - pmax, target - p0))
+                max(0, min(self.pos_max, snap(pos, self.grid_pos)))
+            off = max(-pmin, min(self.pos_max - pmax, target - p0))
         cands.append(plan_normal(shape, snap(max(0.0, ms), self.grid_at),
                                  self.grid_at, self.grid_pos,
                                  b0=p0 + off, b1=plast + off,
-                                 round_interior=self.round_interior))
+                                 round_interior=self.round_interior,
+                                 pos_max=self.pos_max))
         for plan in cands:
             if plan is None:
                 continue
@@ -3032,8 +3075,8 @@ class ScriptEditGraph(tk.Canvas):
         あとに置いたものを優先する。"""
         ms = self.ms_of(x)
         pos = self.pos_of_y(y)
-        margin = self.HIT_PX * 100.0 / max(
-            1, (self.y_of(0) - self.y_of(100)))
+        margin = self.HIT_PX * float(self.pos_max) / max(
+            1, (self.y_of(0) - self.y_of(self.pos_max)))
         for idx in range(len(self.model.patterns) - 1, -1, -1):
             band = self._pattern_band(idx)
             if band is None:
@@ -3141,15 +3184,18 @@ class ScriptEditGraph(tk.Canvas):
             cands.append(plan_connect_both(shape, nl[1], nl[2],
                                            nr[1], nr[2],
                                            self.grid_at, self.grid_pos,
-                                           k_cap=kcap))
+                                           k_cap=kcap,
+                                           pos_max=self.pos_max))
         if nl is not None:
             cands.append(plan_connect_side(shape, "left", nl[1], nl[2], s,
                                            self.grid_at, self.grid_pos,
-                                           k_cap=kcap))
+                                           k_cap=kcap,
+                                           pos_max=self.pos_max))
         if nr is not None:
             cands.append(plan_connect_side(shape, "right", nr[1], nr[2], s,
                                            self.grid_at, self.grid_pos,
-                                           k_cap=kcap))
+                                           k_cap=kcap,
+                                           pos_max=self.pos_max))
         cands.append(self.model.move_pattern(idx, dat, dpos))
         for plan in cands:
             if plan is None:
@@ -3245,7 +3291,7 @@ class ScriptEditGraph(tk.Canvas):
                 # pos' = c + (pos - c)*f。canonical では b0/b1 の中心からの
                 # ずれと k を同じ倍率で伸ばせばよい。
                 c = float(self.pat_center)
-                cur = max(0.0, min(100.0, pos))
+                cur = max(0.0, min(float(self.pos_max), pos))
                 # =228: 外形は**矩形**(_pattern_band)なので、つかんだ辺は
                 # ドラッグ位置に依らず **全点の最大(上辺)/ 最小(下辺)**。
                 # ここを掴んだ x の基準線から取ると、枠の見た目と拡縮の
@@ -3262,7 +3308,7 @@ class ScriptEditGraph(tk.Canvas):
                 for v in vals:
                     d = v - c
                     if d > 1e-9:
-                        f = min(f, (100.0 - c) / d)
+                        f = min(f, (self.pos_max - c) / d)
                     elif d < -1e-9:
                         f = min(f, (0.0 - c) / d)
                 f = max(0.05, f)
@@ -3282,7 +3328,7 @@ class ScriptEditGraph(tk.Canvas):
                 vmax, vmin = max(vals), min(vals)
                 if vmax - vmin < 1e-9:
                     return None          # 平らな形は縦に伸ばせない
-                cur = max(0.0, min(100.0, pos))
+                cur = max(0.0, min(float(self.pos_max), pos))
                 if handle in ("n", "nw", "ne"):
                     c, ref = vmin, vmax          # 下辺固定・上辺=カーソル
                 else:
@@ -3293,7 +3339,7 @@ class ScriptEditGraph(tk.Canvas):
                 for v in vals:            # 全点が 0〜100 に収まる最大倍率
                     d = v - c
                     if d > 1e-9:
-                        f = min(f, (100.0 - c) / d)
+                        f = min(f, (self.pos_max - c) / d)
                     elif d < -1e-9:
                         f = min(f, (0.0 - c) / d)
                 k2 = k * f
@@ -3321,23 +3367,24 @@ class ScriptEditGraph(tk.Canvas):
                         self.model.pos_of(rec["ats"][-1])
                 plan = plan_connect_both(shape, a1, q1, a2, q2,
                                          self.grid_at, self.grid_pos,
-                                         k_cap=kcap)
+                                         k_cap=kcap, pos_max=self.pos_max)
             else:
                 side = "right" if drag_right else "left"
                 plan = plan_connect_side(shape, side, snap_ep[1],
                                          snap_ep[2], s,
                                          self.grid_at, self.grid_pos,
-                                         k_cap=kcap)
+                                         k_cap=kcap, pos_max=self.pos_max)
             return self._with_neighbors(idx, plan) if plan else None
         # 変換後の全点が 0〜100 に収まらない拡縮は拒否する(_plan の
         # クランプで形が崩れたまま確定されるのを防ぐ)
         for (t, _p2), dd in zip(shape, shape_ds(shape)):
             v = b0 + (b1 - b0) * (t / length) + k * dd
-            if v < -1e-6 or v > 100 + 1e-6:
+            if v < -1e-6 or v > self.pos_max + 1e-6:
                 return None
         plan = _plan(shape, A, s, k, b0, b1, self.grid_at, self.grid_pos,
                      fix_left=True, fix_right=True,
-                     round_interior=self.round_interior)
+                     round_interior=self.round_interior,
+                     pos_max=self.pos_max)
         return self._with_neighbors(idx, plan) if plan else None
 
     def _checked(self, plan, exclude: int):
@@ -3551,13 +3598,15 @@ class ScriptEditGraph(tk.Canvas):
 
     def y_of(self, pos: float) -> float:
         _x0, top, _x1, bot = self._plot()
-        return bot - (max(0.0, min(100.0, pos)) / 100.0) * (bot - top)
+        pm = float(self.pos_max)
+        return bot - (max(0.0, min(pm, pos)) / pm) * (bot - top)
 
     def pos_of_y(self, y: float) -> float:
         _x0, top, _x1, bot = self._plot()
         if bot <= top:
             return 0.0
-        return max(0.0, min(100.0, (bot - y) / (bot - top) * 100.0))
+        pm = float(self.pos_max)
+        return max(0.0, min(pm, (bot - y) / (bot - top) * pm))
 
     def _out_of_range(self, x: float, y: float) -> bool:
         """=279: 打点できない場所(at<0 / pos<0 / pos>100)か。
@@ -3759,7 +3808,7 @@ class ScriptEditGraph(tk.Canvas):
                         continue
                     dv = v - c
                     if dv > 1e-9:
-                        f = min(f, (100.0 - c) / dv)
+                        f = min(f, (self.pos_max - c) / dv)
                     elif dv < -1e-9:
                         f = min(f, (0.0 - c) / dv)
                 scale = (c, max(0.0, f))
@@ -3850,7 +3899,7 @@ class ScriptEditGraph(tk.Canvas):
             # 単クリック=打点(点モード・グリッド吸着)
             if self.tool == "point":
                 at = snap(max(0.0, self.ms_of(event.x)), self.grid_at)
-                pos = max(0, min(100, snap(self.pos_of_y(event.y),
+                pos = max(0, min(self.pos_max, snap(self.pos_of_y(event.y),
                                            self.grid_pos)))
                 if self.model.add_point(at, pos):
                     self._notify_change()
@@ -3981,7 +4030,7 @@ class ScriptEditGraph(tk.Canvas):
             self.sel_pattern = None
             self.model.pattern_selection = set()
             at = snap(max(0.0, self.ms_of(event.x)), self.grid_at)
-            pos = max(0, min(100, snap(self.pos_of_y(event.y),
+            pos = max(0, min(self.pos_max, snap(self.pos_of_y(event.y),
                                        self.grid_pos)))
             if self.model.add_point(at, pos):
                 self._notify_change()
@@ -4183,24 +4232,27 @@ class ScriptEditGraph(tk.Canvas):
                     self.create_line(x, top - 12, x, bot, fill=color)
                 t += step
 
-        # 位置の基準線。posグリッド(10単位など)を薄く、0/50/100 を濃く。
+        # 位置の基準線。posグリッド(10単位など)を薄く、0/中央/上端 を濃く。
+        # =297: csv は 0〜200(中央 100)。
+        pm = self.pos_max
+        pc = int(self.pos_center)
         if self.grid_pos > 1:
             p = 0
-            while p <= 100:
-                if p not in (0, 50, 100):
+            while p <= pm:
+                if p not in (0, pc, pm):
                     y = self.y_of(p)
                     self.create_line(x0, y, w, y,
                                      fill=self._c(_DG.C_GRID_POS_SUB))
                 p += self.grid_pos
-        for p in (0, 50, 100):
+        for p in (0, pc, pm):
             y = self.y_of(p)
             self.create_line(x0, y, w, y, fill=self._c(_DG.C_GRID_POS))
         gx = self.GUTTER - 4
         # =233: csv(回転速度)では **下から -100 / 0 / 100** と書く
-        # (中央50=停止・上=正回転・下=逆回転 の実体はそのまま)
-        _axis = ({100: "100", 50: "0", 0: "-100"}
+        # (=297: 中央 pos100=停止・上=正回転・下=逆回転。速度 1 刻み)
+        _axis = ({pm: "100", pc: "0", 0: "-100"}
                  if self.pos_axis == "speed" else None)
-        for p, anc in ((100, "ne"), (50, "e"), (0, "se")):
+        for p, anc in ((pm, "ne"), (pc, "e"), (0, "se")):
             self.create_text(gx, self.y_of(p), anchor=anc,
                              text=(_axis[p] if _axis else str(p)),
                              fill=self._c(_DG.C_AXIS_TEXT),
@@ -4226,7 +4278,8 @@ class ScriptEditGraph(tk.Canvas):
         ghost_map = {}
         if drag:
             ghost_map, _ok = moved_points(pts, sel, drag["dat"], drag["dpos"],
-                                          self.grid_at, self.grid_pos)
+                                          self.grid_at, self.grid_pos,
+                                          pos_max=self.pos_max)
         disp = []
         for at, pos in pts:
             if at in ghost_map:
@@ -4298,7 +4351,10 @@ class ScriptEditGraph(tk.Canvas):
         if self.step and self.model.points:
             fa, fp = self.model.points[0]
             la, lp = self.model.points[-1]
-            ys = self.y_of(CSV_STOP_POS)
+            # =297: 停止の高さは中心(csv=100 / rotate funscript=50 /
+            # vibration=0)。pat_center が無ければ従来の定数。
+            ys = self.y_of(self.pat_center if self.pat_center is not None
+                           else self.pos_center)
             if fa > left:
                 self.create_line(max(x0, self.x_of(left)), ys,
                                  min(w, self.x_of(fa)), ys,
