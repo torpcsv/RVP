@@ -1345,7 +1345,8 @@ class _ScenarioEditorStatesMixin:
                 conflicts.append(tr("{0} が既にあります").format(dest))
         if conflicts:
             self._report(
-                "error", tr("コピーできません(同名ファイル)"),
+                "error", tr("コピーできません(同名ファイル)")
+                + tr("({0}件)").format(len(conflicts)),
                 tr("コピー先に同名のファイルがあるため中止しました。"
                    "ファイル名を変更するか、既存ファイルを整理してください:")
                 + "\n" + "\n".join(conflicts))
@@ -1386,7 +1387,8 @@ class _ScenarioEditorStatesMixin:
         # 5) 保存(付け替え後はすべて保存先の内=相対パスで書き出される)
         if self._do_save(path) and copied:
             self._report(
-                "ok", tr("保存しました(素材をコピー)"),
+                "ok", tr("保存しました(素材をコピー)")
+                + tr("({0}件)").format(len(copied)),
                 tr("{0}個の素材を保存先フォルダへコピーし、"
                    "参照を相対パスに書き換えました:").format(len(copied))
                 + "\n" + "\n".join(sorted(copied)))

@@ -117,8 +117,10 @@ class _ScenarioEditorSaveMixin:
                     "絶対パスで保存されます。このシナリオを配布すると"
                     "他の環境では再生できません。")]
         lines += [p for _k, p in externals]
+        # =310: 件数を見出しへ(本文が長くスクロール枠になっても総数が分かる)
         self._render_message(
-            "warn", tr("外部の素材ファイルがあります"), lines,
+            "warn", tr("外部の素材ファイルがあります")
+            + tr("({0}件)").format(len(externals)), lines,
             buttons=[
                 (tr("はい(相対パスに書き換えて保存する)"),
                  lambda: self._confirm_flatten(path), "primary"),
@@ -176,7 +178,8 @@ class _ScenarioEditorSaveMixin:
             # =130: 読み込み警告(担当種別のトラックが無いチャンネル等)は
             # 保存を止めずに知らせる(エラーとは別枠)
             if sc.load_warnings:
-                self._report("warn", tr("保存しますが、注意点があります"),
+                self._report("warn", tr("保存しますが、注意点があります")
+                             + tr("({0}件)").format(len(sc.load_warnings)),
                              "\n".join(sc.load_warnings))
         except Exception as e:
             self._report(
@@ -275,7 +278,8 @@ class _ScenarioEditorSaveMixin:
             # =130: 読み込み警告(担当種別のトラックが無いチャンネル等)は
             # 保存を止めずに知らせる(エラーとは別枠)
             if _sc.load_warnings:
-                self._report("warn", tr("保存しますが、注意点があります"),
+                self._report("warn", tr("保存しますが、注意点があります")
+                             + tr("({0}件)").format(len(_sc.load_warnings)),
                              "\n".join(_sc.load_warnings))
         except Exception as e:
             try:

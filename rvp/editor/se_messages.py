@@ -13,12 +13,20 @@ from . import common as _clr   # =301: テーマ追従する色定数は定義�
 from ._hooks import _pkg
 
 
+# =310: 本文がこの行数を超えたら、ラベル列ではなく高さ固定のスクロール枠
+# (読み取り専用 CTkTextbox)に入れる。外部素材の一覧などが数十行になると
+# ボタン行が画面外へ押し出されて操作不能になっていた(ユーザー報告)。
+MSG_SCROLL_LINES = 8
+MSG_SCROLL_HEIGHT = 176   # 12pt × 8 行分 + 余白
+
+
 class _ScenarioEditorMessagesMixin:
     """ScenarioEditor の mixin(=301 分割)。メッセージ領域・フィールド着色・確認ダイアログ"""
 
     def _build_msg_area(self):
         self._pending_confirm = None
         self._msg_line_labels: list = []
+        self._msg_scroll_box = None     # =310: 長い一覧のスクロール枠
         self._msg_buttons: list = []
         self._marks: list = []          # 着色中の不正フィールド
         self._pending_marks: list = []  # 検証中に記録する (widget, kind)
@@ -52,6 +60,7 @@ class _ScenarioEditorMessagesMixin:
         for w in self._msg_line_labels:
             w.destroy()
         self._msg_line_labels = []
+        self._msg_scroll_box = None
         for w in self._msg_buttons:
             w.destroy()
         self._msg_buttons = []
@@ -83,13 +92,29 @@ class _ScenarioEditorMessagesMixin:
             wrap_px = max(560, self.winfo_width() - 80)
         except Exception:
             wrap_px = 780
-        for ln in lines:
-            lbl = ctk.CTkLabel(self.msg_body, text=("• " + ln) if len(lines) > 1
-                               else ln,
-                               font=ctk.CTkFont(size=12), text_color=color,
-                               justify="left", anchor="w", wraplength=wrap_px)
-            lbl.pack(fill="x", anchor="w")
-            self._msg_line_labels.append(lbl)
+        self._msg_scroll_box = None
+        if len(lines) > MSG_SCROLL_LINES:
+            # =310: 長い一覧は高さ固定のスクロール枠へ(ボタン行と編集画面を
+            # 押し出さない)。テキストなのでパスの選択コピーもできる。
+            box = ctk.CTkTextbox(
+                self.msg_body, height=MSG_SCROLL_HEIGHT,
+                font=ctk.CTkFont(size=12), text_color=color,
+                fg_color=("gray97", "gray13"), border_width=1,
+                border_color=MUTED, corner_radius=6, wrap="word")
+            box.insert("1.0", "\n".join("• " + ln for ln in lines))
+            box.configure(state="disabled")
+            box.pack(fill="x", anchor="w", pady=(2, 2))
+            self._msg_line_labels.append(box)
+            self._msg_scroll_box = box
+        else:
+            for ln in lines:
+                lbl = ctk.CTkLabel(self.msg_body,
+                                   text=("• " + ln) if len(lines) > 1 else ln,
+                                   font=ctk.CTkFont(size=12), text_color=color,
+                                   justify="left", anchor="w",
+                                   wraplength=wrap_px)
+                lbl.pack(fill="x", anchor="w")
+                self._msg_line_labels.append(lbl)
 
         if buttons:
             for text, cmd, style in buttons:
