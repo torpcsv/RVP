@@ -87,6 +87,12 @@ copy /Y README.md dist\RVP\
   `goto :fail` のラベルを見つけられない)。リポジトリでは `.gitattributes`
   (`*.bat text eol=crlf`)で改行を固定している。エディタで直すときは
   「Shift-JIS / CRLF」で上書き保存する。
+- **exe のアイコンが白紙(既定のアプリアイコン)になる**: `icon\rvp.ico` の
+  256px 未満のエントリが PNG 圧縮だとエクスプローラが描画できない(Pillow の
+  ICO 書き出しの既定)。同梱の ico は 256px 未満を BMP 形式で格納してある。
+  それでも白紙のままなら Windows のアイコンキャッシュが原因なので **PC を
+  再起動**する(=295 で実際に再起動で解消)。
+  ico を作り直すときは `icon_src/make_icon.py` の `write_ico` を使う。
 
 - **アイコンが変わって見えないときはWindowsのアイコンキャッシュ**を疑う。
   dist フォルダを別名にして起動し直すのが一番早い確認方法。

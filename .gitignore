@@ -8,6 +8,7 @@ notes/
 # ---- development-only tools and test material ----
 icon_src/
 tools/
+tests/          # =307: test_*.py は tests/ 配下へ移動
 test_*.py
 test_work*/
 tw_*/
