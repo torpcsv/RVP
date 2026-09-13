@@ -685,17 +685,20 @@ class _ItemReviewEditMixin:
         # カーソルがあるときは数字入力を優先する(_key_target_is_entry)。
         # =311: 左右2本(UFOTW)のときは**メインの数字行=左(ロータ1)・
         # テンキー=右(ロータ2)**に固定する(1本表示のときは両方とも今のグラフ)。
+        # =321: **Windows の Tk はテンキーの数字も keysym "1" で届く**
+        # (KP_1 にならない)ので、束縛名では左右を分けられない(v1.2.0 で
+        # テンキーが左に打たれた不具合)。keysym と keycode(VK_NUMPAD0〜9=
+        # 96〜105・VK_ADD=107)から _pos_key_side で判定する。
         for d in range(10):
-            self.bind("<KeyPress-" + str(d) + ">",
-                      lambda _e, v=d * 10: self._on_pos_key(v, side=0),
+            for seq in ("<KeyPress-" + str(d) + ">",
+                        "<KeyPress-KP_" + str(d) + ">"):
+                self.bind(seq, lambda e, v=d * 10:
+                          self._on_pos_key(v, side=self._pos_key_side(e)),
+                          add="+")
+        for seq in ("<KeyPress-plus>", "<KeyPress-KP_Add>"):
+            self.bind(seq, lambda e:
+                      self._on_pos_key(100, side=self._pos_key_side(e)),
                       add="+")
-            self.bind("<KeyPress-KP_" + str(d) + ">",
-                      lambda _e, v=d * 10: self._on_pos_key(v, side=1),
-                      add="+")
-        self.bind("<KeyPress-plus>",
-                  lambda _e: self._on_pos_key(100, side=0), add="+")
-        self.bind("<KeyPress-KP_Add>",
-                  lambda _e: self._on_pos_key(100, side=1), add="+")
 
         # ---- グラフ ----
         # =232: 2本作る。1本目は常に出し、2本目(右=ロータ2)は5列csvの
@@ -799,6 +802,22 @@ class _ItemReviewEditMixin:
                   "／ 数字キー=再生位置へ打点（0〜9=pos0〜90・+=pos100） "
                   "／ 矢印キー=選択中の点・パターンを1グリッド移動（長押しで連続） "
                   "／ Q・E=10秒戻る・進む")
+
+    @staticmethod
+    def _pos_key_side(event, platform=None) -> int:
+        """=321: 数字キーの打点先。0=数字行(左) / 1=テンキー(右)。
+        X11 はテンキーが keysym KP_1 で届く。Windows は keysym "1" のまま
+        keycode が VK_NUMPAD0〜9(96〜105)・VK_ADD(107)になる。"""
+        import sys
+        ks = str(getattr(event, "keysym", "") or "")
+        if ks.startswith("KP_"):
+            return 1
+        plat = platform or sys.platform
+        if plat == "win32":
+            kc = int(getattr(event, "keycode", 0) or 0)
+            if 96 <= kc <= 105 or kc == 107:
+                return 1
+        return 0
 
     # =312: _fkey_held 等は =222 当時の名前の互換(1本表示=側0)。
     @property
