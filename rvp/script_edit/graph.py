@@ -96,6 +96,9 @@ class ScriptEditGraph(_ScriptEditGraphPlanMixin, _ScriptEditGraphInputMixin, _Sc
         # =233: マウス位置の十字ガイド (at, pos|None)。pos=None は
         # 「縦線だけ」= 仲間のグラフ(サブ・左右のもう片方)へ映したもの。
         self.cross = None
+        # =318: 時間ラベルを hh:mm:ss.fff にするか(素材が 1 時間以上のとき
+        # だけ。普段は mm:ss.fff)。initial_view(duration) で決まる。
+        self.time_hours = False
         # =243: 音声波形(背景の帯)。wave_env は編集画面が渡す
         # {"bucket_ms", "chans"(ch別ピーク列), "mono"(合成), "peak"}。
         # wave_mode: "off" / "mono" / "stereo" / "stereo_rev"。
@@ -357,6 +360,7 @@ class ScriptEditGraph(_ScriptEditGraphPlanMixin, _ScriptEditGraphInputMixin, _Sc
         """全長に応じた初期表示。空(全長0)は表示幅30秒相当の縮尺にする。
         =201: 初期表示は左寄りアンカーへ戻す(_played リセット)。"""
         self._played = bool(self.playing)
+        self.time_hours = int(duration_ms) >= 3600_000       # =318
         if duration_ms <= 0:
             for i, lv in enumerate(self.LEVELS):
                 if lv[2] * 2.5 * 1000.0 >= EMPTY_VIEW_MS:

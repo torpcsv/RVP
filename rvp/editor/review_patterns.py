@@ -13,6 +13,12 @@ from .user_patterns import UserPatternDialog
 from . import common as _clr   # =301: テーマ追従する色定数は定義元を参照
 
 
+
+# =317: 回転(csv・rotate 系 funscript)の数字キー → 回転速度。キーは
+# _on_pos_key に渡る「数字×10」(0=0, 1=10 … 9=90, +=100)で引く。
+ROTATE_KEY_SPEED = {10: -70, 20: -60, 30: -50, 40: -40, 50: 0,
+                    60: 40, 70: 50, 80: 60, 90: 70}
+
 class _ItemReviewPatternsMixin:
     """ItemReviewDialog の mixin(=301 分割)。パターンパレット・Fキー割り当て/配置・時間補正・右クリックメニュー"""
 
@@ -152,84 +158,138 @@ class _ItemReviewPatternsMixin:
                 pass
             self._time_adj_job = None
 
+    # =311/=312: キー操作の対象。左右2本(UFOTW)のときだけ side(0=左/1=右)
+    # で固定し、それ以外は今のアクティブなグラフ。**アクティブは切り替えない**
+    # (Ctrl+Z は =298 の EditLink が「最後に変更したモデル」を戻すので、
+    # 打点先を固定してもそのまま UNDO の対象になる)。
+    def _key_side(self, side) -> int:
+        if side is None or not self._edit_pair:
+            return 0 if not self._edit_pair else int(self._edit_active)
+        return 1 if int(side) else 0
+
+    def _key_target(self, side):
+        """(graph, model)。side=None は今のアクティブ。"""
+        i = self._key_side(side)
+        return self._edit_graphs[i], self._edit_models[i]
+
+    def _fk_side_of(self, fk: str) -> int:
+        """=312: F キーの打点先(0=左/1=右/2=両方)。2本表示のときだけ割り当ての
+        側、それ以外は 0(1本表示のチェーン状態は常に [0])。"""
+        if not self._edit_pair:
+            return 0
+        sd = int(self._fkey_sides.get(fk, 0))
+        return sd if 0 <= sd <= 2 else 0
+
+    def _fk_targets(self, side: int) -> list:
+        """=314: 打点先の側の一覧。両方(2)は [0, 1]。"""
+        if side == 2 and self._edit_pair:
+            return [0, 1]
+        return [self._key_side(side)]
+
     def _on_fkey_press(self, fk: str):
         """F キーの押下。単押しは =213 のまま(今の再生位置へ1つ置く)。
         押しっぱなしのときは、置いたパターンの**終端**に再生位置が届くたび、
-        その終端を起点に次を置いて数珠つなぎにする(=222)。"""
-        if self._fkey_release_job is not None:
+        その終端を起点に次を置いて数珠つなぎにする(=222)。
+        =312: 数珠つなぎの状態は打点先(左/右)ごと。別の側のキーは互いに
+        干渉しない(F1 左を押しっぱなしのまま F5 右を押せる)。"""
+        side = self._fk_side_of(fk)
+        c = self._fk_chain[side]
+        if c.release_job is not None:
             # 自動リピートの Release が来ていた=押しっぱなしの継続
             try:
-                self.after_cancel(self._fkey_release_job)
+                self.after_cancel(c.release_job)
             except Exception:
                 pass
-            self._fkey_release_job = None
-        if self._fkey_held == fk:
+            c.release_job = None
+        if c.held == fk:
             return "break"              # OS の自動リピートは無視
-        if self._fkey_held is not None:
-            # 押しっぱなし中に別のキー=**数珠つなぎは続けたまま形だけ交代**
-            # (ユーザー決定)。ここでは置かない=次の終端から新しい形になる
+        if c.held is not None:
+            # 押しっぱなし中に同じ側の別のキー=**数珠つなぎは続けたまま形だけ
+            # 交代**(ユーザー決定)。ここでは置かない=次の終端から新しい形になる
             if self._fkey_map.get(fk) is None:
                 return "break"
-            self._fkey_held = fk
+            c.held = fk
             return "break"
         r = self._on_fkey(fk)
         if r == "break" and self._fkey_map.get(fk) is not None:
-            self._fkey_held = fk
+            c.held = fk
             # 置けた区間の終端だけを次の起点にする(失敗時は None のまま)
-            rng = getattr(self.edit_model, "last_place_range", None)
-            self._fkey_chain_end = rng[1] if rng else None
-            self._chain_stop_job()
-            if self._fkey_chain_end is not None:
-                self._fkey_job = self.after(self.CHAIN_POLL_MS,
-                                            self._fkey_chain_tick)
+            c.chain_end = self._fk_last_end(side)
+            self._chain_stop_job(side)
+            if c.chain_end is not None:
+                c.job = self.after(self.CHAIN_POLL_MS,
+                                   lambda sd=side: self._fkey_chain_tick(sd))
         return r
 
-    def _fkey_chain_tick(self):
+    def _fkey_chain_tick(self, side: int = 0):
         """再生位置が直前のパターンの終端に届いたら、そこから次を置く。"""
-        self._fkey_job = None
-        if self._fkey_held is None or self._fkey_chain_end is None:
+        c = self._fk_chain[side]
+        c.job = None
+        if c.held is None or c.chain_end is None:
             return
         try:
             if not self.winfo_exists() or not self.edit_mode:
                 return
         except Exception:
             return
-        if self._now_ms() >= self._fkey_chain_end:
+        if self._now_ms() >= c.chain_end:
             # 起点は**素材時刻ちょうど**(時間補正は最初の1つだけに掛ける)
-            self._on_fkey(self._fkey_held, at0=self._fkey_chain_end)
+            self._on_fkey(c.held, at0=c.chain_end, side=side)
             # 置けなかった回は last_place_range が None=そこで連続を止める
-            rng = getattr(self.edit_model, "last_place_range", None)
-            if not rng or rng[1] <= self._fkey_chain_end:
-                self._chain_stop()      # 進まない=無限ループ防止
+            end = self._fk_last_end(side)
+            if end is None or end <= c.chain_end:
+                self._chain_stop(side)      # 進まない=無限ループ防止
                 return
-            self._fkey_chain_end = rng[1]
-        self._fkey_job = self.after(self.CHAIN_POLL_MS, self._fkey_chain_tick)
+            c.chain_end = end
+        c.job = self.after(self.CHAIN_POLL_MS,
+                           lambda sd=side: self._fkey_chain_tick(sd))
 
     def _on_fkey_release(self, fk: str):
-        if self._fkey_held != fk:
+        # 押されている側を探す(押下後に表示が切り替わっても取りこぼさない)
+        for side, c in enumerate(self._fk_chain):
+            if c.held == fk:
+                break
+        else:
             return "break"
-        if self._fkey_release_job is not None:
+        if c.release_job is not None:
             try:
-                self.after_cancel(self._fkey_release_job)
+                self.after_cancel(c.release_job)
             except Exception:
                 pass
-        self._fkey_release_job = self.after(self.FKEY_RELEASE_MS,
-                                            self._chain_stop)
+        c.release_job = self.after(self.FKEY_RELEASE_MS,
+                                   lambda sd=side: self._chain_stop(sd))
         return "break"
 
-    def _chain_stop_job(self):
-        if self._fkey_job is not None:
-            try:
-                self.after_cancel(self._fkey_job)
-            except Exception:
-                pass
-            self._fkey_job = None
+    def _fk_last_end(self, side: int):
+        """直前の配置の終端(次の数珠つなぎの起点)。両方(2)は左右で置けた
+        ほうの終端の最大(片方だけ置けたらそちらを続ける)。"""
+        ends = []
+        for i in self._fk_targets(side):
+            rng = getattr(self._edit_models[i], "last_place_range", None)
+            if rng:
+                ends.append(rng[1])
+        return max(ends) if ends else None
 
-    def _chain_stop(self):
-        self._fkey_release_job = None
-        self._fkey_held = None
-        self._fkey_chain_end = None
-        self._chain_stop_job()
+    def _chain_stop_job(self, side=None):
+        for i, c in enumerate(self._fk_chain):
+            if side is not None and i != side:
+                continue
+            if c.job is not None:
+                try:
+                    self.after_cancel(c.job)
+                except Exception:
+                    pass
+                c.job = None
+
+    def _chain_stop(self, side=None):
+        """side=None は両方止める(編集モードを閉じるとき)。"""
+        for i, c in enumerate(self._fk_chain):
+            if side is not None and i != side:
+                continue
+            c.release_job = None
+            c.held = None
+            c.chain_end = None
+        self._chain_stop_job(side)
 
     def _key_target_is_entry(self) -> bool:
         """フォーカスが文字入力欄にあるか(数字キーは入力を優先する)。"""
@@ -239,12 +299,13 @@ class _ItemReviewPatternsMixin:
             return False
         return isinstance(w, (tk.Entry, tk.Text))
 
-    def _on_pos_key(self, pos: int):
+    def _on_pos_key(self, pos: int, side=None):
         """0〜9 と + キー: 今の再生位置(+時間補正)へ点を打つ(=223)。
 
         pos は 0/10/…/90/100(csv は 2 倍=297)。時間[at]グリッドへ吸着する。重なるパターンは
         丸ごと消して打つ(ユーザー決定=要望1と同じ「後から置くものを優先」)。
         再生は止めない。1回の打点が UNDO 1ステップ。
+        =311: side(0=数字行→左 / 1=テンキー→右)は左右2本のときだけ効く。
         """
         from .. import script_edit
         if not self.edit_mode or not self._edit_built or \
@@ -252,13 +313,22 @@ class _ItemReviewPatternsMixin:
             return None
         if self._key_target_is_entry():
             return None                 # at/pos 欄へ数字を入れている最中
-        g = self.edit_graph
+        g, m = self._key_target(side)
         at = script_edit.snap(max(0.0, self._now_ms() + self._time_adj_ms()),
                               g.grid_at)
-        # =297: csv(分解能 200)では 0〜9/+ を 0/20/…/200(=速度 -100〜+100
-        # の 20 刻み)にする(ユーザー決定)
-        pos = int(round(int(pos) * self._edit_pos_max() / 100.0))
-        r = self.edit_model.place_point_over(int(at), int(pos))
+        if self._pat_mode() == script_edit.PAT_MODE_ROTATE:
+            # =317: 回転(csv・rotate funscript)は **1〜9 = 速度 -70,-60,-50,
+            # -40,0,+40,+50,+60,+70**、0 と + は何もしない(ユーザー決定:
+            # -100 や +90 は使わないため)。
+            spd = ROTATE_KEY_SPEED.get(int(pos))
+            if spd is None:
+                return "break"
+            pos = int(round((50 + spd / 2.0) * self._edit_pos_max() / 100.0))
+        else:
+            # =297: csv(分解能 200)では 0〜9/+ を 0/20/…/200(=速度 -100〜+100
+            # の 20 刻み)にする(ユーザー決定)
+            pos = int(round(int(pos) * self._edit_pos_max() / 100.0))
+        r = m.place_point_over(int(at), int(pos))
         if r == "ok":
             g.sel_pattern = None
             self._edit_on_change()
@@ -266,13 +336,14 @@ class _ItemReviewPatternsMixin:
             g.redraw()
         return "break"
 
-    def _on_fkey(self, fk: str, at0: float | None = None):
+    def _on_fkey(self, fk: str, at0: float | None = None, side=None):
         """F1〜F9: 割り当てたパターンを**今の再生位置**(+時間補正)へ
         左端を合わせて上書き配置する(=213)。再生は止めない。
         失敗は edit_msg へ短く出すだけ。
         **=227: 再生中でないときは「グラフ上のマウス位置」へ置く**
         (マウスがグラフの外にあるときは従来どおり再生位置)。
-        at0 を渡すと**その素材時刻**を起点にする(=222 の数珠つなぎ)。"""
+        at0 を渡すと**その素材時刻**を起点にする(=222 の数珠つなぎ)。
+        =312: 左右2本のときは割り当ての側(_fkey_sides)へ置く。"""
         from .. import script_edit
         if not self.edit_mode or not self._edit_built or \
                 self.edit_model is None:
@@ -280,6 +351,10 @@ class _ItemReviewPatternsMixin:
         ref = self._fkey_map.get(fk)
         if ref is None:
             return None
+        if side is None:
+            side = self._fk_side_of(fk)
+        targets = self._fk_targets(side)
+        g = self._edit_graphs[targets[0]]
         if ref[0] == "user":
             ukey = self._user_key(ref[1])      # =231: 枠番号→今の種別の枠
             shape = self._user_patterns.get(ukey)
@@ -293,15 +368,23 @@ class _ItemReviewPatternsMixin:
                 return None
             # =226: 離散的なスクリプトは **定義どおりの高さで固定**
             # (pos50 基準へずらすのは linear/twist のときだけ)
-            base = None if self.edit_graph.pat_center is not None else 50
+            base = None if g.pat_center is not None else 50
         if self._edit_invert:
             shape = script_edit.invert_shape(shape)
-        g = self.edit_graph
         pos0 = None
         if at0 is None:
             # =227: **再生中でないときは、グラフ上のマウス位置へ置く**
             # (ユーザー要望2。マウスがグラフの外なら従来どおり再生位置)。
-            mp = None if self._playing else g.mouse_place_at()
+            # =312: 2本表示ではマウスがもう片方のグラフ上でも時刻だけ使う
+            # (時間軸は左右で同じ)
+            mp = None
+            if not self._playing:
+                for gg in self.edit_graphs:
+                    mp = gg.mouse_place_at()
+                    if mp is not None:
+                        if gg is not g:
+                            mp = (mp[0], None)
+                        break
             if mp is not None:
                 at0, pos0 = mp
             else:
@@ -309,13 +392,22 @@ class _ItemReviewPatternsMixin:
         if pos0 is not None and base is not None:
             # linear/twist はクリックと同じく「マウスの高さ」を基準にする
             base = max(0, min(100, int(round(pos0))))
-        r = self.edit_model.place_pattern_over(
-            shape, at0, base, g.grid_at, g.grid_pos, name,
-            scale=self._edit_scale)
+        # =314: 両方(2)は左右へ同じ配置。片方でも置けたら成功扱い、
+        # 両方だめなら片方の理由を出す
+        r = None
+        for i in targets:
+            gi, mi = self._edit_graphs[i], self._edit_models[i]
+            ri = mi.place_pattern_over(
+                shape, at0, base, gi.grid_at, gi.grid_pos, name,
+                scale=self._edit_scale)
+            if ri == "ok":
+                gi.sel_pattern = None
+                gi.redraw()
+                r = "ok"
+            elif r != "ok":
+                r = ri
         if r == "ok":
-            g.sel_pattern = None
             self._edit_on_change()
-            g.redraw()
         else:
             self._edit_paste_warned = True
             if r == "edge":
@@ -365,19 +457,44 @@ class _ItemReviewPatternsMixin:
             except Exception:
                 pass
         menu = tk.Menu(self, tearoff=0)
-        cur = script_edit.fkey_of(self._fkey_map, ref)
-        for fk in script_edit.FKEYS:
-            other = self._fkey_map.get(fk)
-            label = fk
-            if fk == cur:
-                label = "● " + fk
-            elif other is not None:
-                label = fk + "  (" + self._ref_label(other) + ")"
-            menu.add_command(label=label,
-                             command=lambda k=fk, r=ref: self.assign_fkey(k, r))
+        mine = script_edit.fkeys_of(self._fkey_map, self._fkey_sides, ref)
+        if self._edit_pair:
+            # =312: 左右2本(UFOTW)では「F1 左（ロータ1）」「F1 右（ロータ2）」
+            # …の 18 行(ユーザー決定)。同じパターンを左右別のキーへ置ける。
+            # =314: 並びは F1左…F9左 / F1右…F9右 / F1両方…F9両方(ユーザー
+            # 決定。「両方」=1キーで左右へ同時に置く)。
+            side_names = (tr("左（ロータ1）"), tr("右（ロータ2）"),
+                          tr("両方（同時）"))
+            for side in (0, 1, 2):
+                if side:
+                    menu.add_separator()
+                for fk in script_edit.FKEYS:
+                    other = self._fkey_map.get(fk)
+                    label = fk + " " + side_names[side]
+                    if (fk, side) in mine:
+                        label = "● " + label
+                    elif other is not None:
+                        label += "  (" + self._ref_label(other) + " " + \
+                            side_names[self._fkey_sides.get(fk, 0)] + ")"
+                    menu.add_command(
+                        label=label,
+                        command=lambda k=fk, r=ref, sd=side:
+                        self.assign_fkey(k, r, sd))
+        else:
+            cur = script_edit.fkey_of(self._fkey_map, ref)
+            for fk in script_edit.FKEYS:
+                other = self._fkey_map.get(fk)
+                label = fk
+                if fk == cur:
+                    label = "● " + fk
+                elif other is not None:
+                    label = fk + "  (" + self._ref_label(other) + ")"
+                menu.add_command(
+                    label=label,
+                    command=lambda k=fk, r=ref: self.assign_fkey(k, r))
         menu.add_separator()
         menu.add_command(label=tr("割り当て解除"),
-                         state="normal" if cur else "disabled",
+                         state="normal" if mine else "disabled",
                          command=lambda r=ref: self.assign_fkey(None, r))
         self._fkey_menu = menu
         try:
@@ -398,59 +515,86 @@ class _ItemReviewPatternsMixin:
         except Exception:
             return str(ref[1])
 
-    def assign_fkey(self, fkey, ref):
+    def assign_fkey(self, fkey, ref, side=None):
         """ref へ fkey を割り当てる(fkey=None は解除)。排他=同じ ref を
-        持つ他のキーは外れて移動する。config へ即保存。"""
+        持つ他のキーは外れて移動する。config へ即保存。
+        =312: side(0=左/1=右)付きなら排他は (ref, side) の組。解除は
+        その ref のキーを左右とも外す。"""
         from .. import script_edit
         cfg = load_config()
         if fkey is None:
-            cur = script_edit.fkey_of(self._fkey_map, ref)
-            if cur is None:
+            mine = script_edit.fkeys_of(self._fkey_map, self._fkey_sides, ref)
+            if not mine:
                 return
-            script_edit.save_fkey_map(cfg, cur, None)
+            for k, _sd in mine:
+                script_edit.save_fkey_map(cfg, k, None)
         else:
-            script_edit.save_fkey_map(cfg, fkey, tuple(ref))
+            script_edit.save_fkey_map(cfg, fkey, tuple(ref), side)
         save_config(cfg)
         self._fkey_map = script_edit.load_fkey_map(cfg)
+        self._fkey_sides = script_edit.load_fkey_sides(cfg)
         self._refresh_fkey_badges()
 
-    def _badge_colors(self):
+    def _badge_colors(self, right: bool = False):
+        """=314: 左(と1本表示)は青、右は緑(濃さは青と同じ・文字は白)。"""
         dark = ctk.get_appearance_mode() != "Light"
+        if right:
+            return ("#3aa66a", "white") if dark else ("#2e8a52", "white")
         return (_clr.ACCENT, "white") if dark else ("#5245c9", "white")
 
     def _refresh_fkey_badges(self):
-        """全ボタンのバッジを割り当てに合わせて更新する(=212)。"""
+        """全ボタンのバッジを割り当てに合わせて更新する(=212)。
+        =314: **左上=左(青)・右上=右(緑)**。1本表示は左上の青だけで側を
+        出さない(「F1 F5」)。両方(2)は左右のバッジ両方に「F1両」で出る。"""
         from .. import script_edit
-        want = {}
+        pair = getattr(self, "_edit_pair", False)
+        side_short = (tr("左"), tr("右"), tr("両"))
+        want_l, want_r = {}, {}
         for fk, ref in self._fkey_map.items():
             if ref[0] == "user" and \
                     self._user_key(ref[1]) not in self._user_patterns:
                 continue          # 今の種別で未登録の枠にはバッジを出さない
-            want[tuple(ref)] = fk
-        for ref, lbl in list(self._fkey_badges.items()):
-            if ref not in want:
-                try:
-                    lbl.destroy()
-                except Exception:
-                    pass
-                del self._fkey_badges[ref]
-        bg, fg = self._badge_colors()
-        for ref, fk in want.items():
-            btn = self.edit_pattern_btns[ref[1]] if ref[0] == "std" \
-                else self.edit_user_btns.get(ref[1])
-            if btn is None:
+            key = tuple(ref)
+            sd = int(self._fkey_sides.get(fk, 0))
+            if not pair:
+                want_l[key] = (want_l[key] + " " + fk) if key in want_l else fk
                 continue
-            lbl = self._fkey_badges.get(ref)
-            if lbl is None or not lbl.winfo_exists():
-                lbl = tk.Label(btn, text=fk, bd=0, padx=2, pady=0,
-                               font=(appfont.FAMILY, 7, "bold"))
-                # バッジの上のクリックもボタンとして働かせる
-                lbl.bind("<Button-1>", lambda _e, r=ref:
-                         self._set_edit_tool(r[1] if r[0] == "std" else r))
-                self._fkey_badges[ref] = lbl
-            lbl.configure(text=fk, bg=bg, fg=fg)
-            lbl.place(relx=1.0, x=-1, y=1, anchor="ne")
-            lbl.lift()
+            txt = fk + side_short[sd]
+            if sd in (0, 2):
+                want_l[key] = (want_l[key] + " " + txt) if key in want_l \
+                    else txt
+            if sd in (1, 2):
+                want_r[key] = (want_r[key] + " " + txt) if key in want_r \
+                    else txt
+        for want, badges, right in ((want_l, self._fkey_badges, False),
+                                    (want_r, self._fkey_badges_r, True)):
+            for ref, lbl in list(badges.items()):
+                if ref not in want:
+                    try:
+                        lbl.destroy()
+                    except Exception:
+                        pass
+                    del badges[ref]
+            bg, fg = self._badge_colors(right)
+            for ref, txt in want.items():
+                btn = self.edit_pattern_btns[ref[1]] if ref[0] == "std" \
+                    else self.edit_user_btns.get(ref[1])
+                if btn is None:
+                    continue
+                lbl = badges.get(ref)
+                if lbl is None or not lbl.winfo_exists():
+                    lbl = tk.Label(btn, text=txt, bd=0, padx=2, pady=0,
+                                   font=(appfont.FAMILY, 7, "bold"))
+                    # バッジの上のクリックもボタンとして働かせる
+                    lbl.bind("<Button-1>", lambda _e, r=ref:
+                             self._set_edit_tool(r[1] if r[0] == "std" else r))
+                    badges[ref] = lbl
+                lbl.configure(text=txt, bg=bg, fg=fg)
+                if right:
+                    lbl.place(relx=1.0, x=-1, y=1, anchor="ne")
+                else:
+                    lbl.place(relx=0.0, x=1, y=1, anchor="nw")   # =314: 左上
+                lbl.lift()
 
     def _on_user_patterns_saved(self):
         """ユーザーパターン編集ポップアップの保存後(=205)。"""

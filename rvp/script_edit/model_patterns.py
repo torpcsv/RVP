@@ -264,7 +264,8 @@ class _ScriptEditModelPatternsMixin:
         return int(round(c + (float(pos) - c) * f))
 
     def group_move_plan(self, dat: float, dpos: float,
-                        grid_at: int, grid_pos: int, scale=None):
+                        grid_at: int, grid_pos: int, scale=None,
+                        exact_dpos: bool = False):
         """複数選択(点+パターン)の剛体移動プラン(=188)。
 
         **選択集合をそのまま平行移動**する。Δをグリッドへ丸め(相対配置は
@@ -288,6 +289,8 @@ class _ScriptEditModelPatternsMixin:
             else int(round(dat))
         if scale is not None:
             dpos_q = 0                      # =234: 縦は拡縮で表す
+        elif exact_dpos:
+            dpos_q = int(round(dpos))       # =320: 呼び出し側で吸着済み
         else:
             dpos_q = round(dpos / grid_pos) * grid_pos if grid_pos > 1 \
                 else int(round(dpos))

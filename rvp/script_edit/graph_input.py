@@ -20,8 +20,8 @@ class _ScriptEditGraphInputMixin:
             return False
         dat = int(dat_step) * (self.grid_at if self.grid_at > 1 else 1)
         dpos = int(dpos_step) * (self.grid_pos if self.grid_pos > 1 else 1)
-        if dpos and self.pat_center is not None and m.pattern_selection:
-            return False        # =226: 離散はパターンの縦移動を許さない
+        # =320: 離散(rotate/vib)でもパターンの縦移動を許す(=226 の制限を
+        # 撤廃。ユーザー決定=平行移動で速度・強さをまとめて変える)
         if dat == 0 and dpos == 0:
             return False
         plan = m.group_move_plan(dat, dpos, self.grid_at, self.grid_pos)
@@ -264,7 +264,11 @@ class _ScriptEditGraphInputMixin:
         if self._group_box_hit(event.x, event.y):
             self._drag = {"kind": "groupmove", "x": event.x,
                           "y": event.y, "moved": 0, "plan": None,
-                          "click_fb": True}
+                          "click_fb": True,
+                          # =320: 掴んだ位置に最も近い選択点の pos(縦の
+                          # グリッド吸着の基準)
+                          "anchor_pos": self._group_anchor_pos(event.x,
+                                                               event.y)}
             return
         if hit_pat is None and hit is not None:
             # 普通の点(P1 と同じ)
@@ -313,37 +317,17 @@ class _ScriptEditGraphInputMixin:
             span = self.span_ms()
             dat = (event.x - d["x"]) * (span / (x1 - x0))
             dpos = self.pos_of_y(event.y) - self.pos_of_y(d["y"])
-            scale = None
             if self.pat_center is not None:
-                # =234: 離散(rotate系)は縦を**中心の線を軸にした拡縮**に
-                # する(=226 の「縦の平行移動は許さない」の置き換え)。
-                # 掴んだ高さが中心からどれだけ動いたか=倍率。
-                c = float(self.pat_center)
-                p0 = self.pos_of_y(d["y"])
-                p1 = self.pos_of_y(event.y)
-                f = 1.0 if abs(p0 - c) < 1.0 else (p1 - c) / (p0 - c)
-                f = max(0.0, f)
-                # パターンの拡縮(=226)と同じく、**全部が 0〜100 に収まる
-                # 最大倍率でクランプ**する(はみ出す位置では何も起きない、
-                # ではなく端で止まる)
-                vals = [self.model.pos_of(a) for a in self.model.selection]
-                for gi in self.model.pattern_selection:
-                    if 0 <= gi < len(self.model.patterns):
-                        vals += [self.model.pos_of(a)
-                                 for a in self.model.patterns[gi]["ats"]]
-                for v in vals:
-                    if v is None:
-                        continue
-                    dv = v - c
-                    if dv > 1e-9:
-                        f = min(f, (self.pos_max - c) / dv)
-                    elif dv < -1e-9:
-                        f = min(f, (0.0 - c) / dv)
-                scale = (c, max(0.0, f))
-                dpos = 0.0
-            d["scale"] = scale
-            d["plan"] = self.model.group_move_plan(
-                dat, dpos, self.grid_at, self.grid_pos, scale=scale)
+                # =320: 離散(rotate/vib)も**平行移動**(=234 の「中心を軸に
+                # した拡縮」を置き換え。ユーザー決定)。縦の Δ は「掴んだ点
+                # がグリッド線に乗る量」に限定し(90→40、他は同じ Δ で
+                # 80→30)、全員が 0〜pos_max に収まる範囲で端で止める。
+                dpos = self._discrete_group_dpos(d.get("anchor_pos"), dpos)
+                d["plan"] = self.model.group_move_plan(
+                    dat, dpos, self.grid_at, self.grid_pos, exact_dpos=True)
+            else:
+                d["plan"] = self.model.group_move_plan(
+                    dat, dpos, self.grid_at, self.grid_pos)
         elif d["kind"] == "resize":
             d["plan"] = self._resize_plan(event, d["handle"])
         elif d["kind"] == "rect":
@@ -394,10 +378,8 @@ class _ScriptEditGraphInputMixin:
                 return
             if d["moved"] >= self.CLICK_PX and d.get("plan") is not None:
                 gdat, gdpos = d["plan"]
-                gsc = d.get("scale")
-                if (gdat or gdpos or
-                        (gsc is not None and abs(gsc[1] - 1.0) > 1e-9)) and \
-                        self.model.apply_group_move(gdat, gdpos, scale=gsc):
+                if (gdat or gdpos) and \
+                        self.model.apply_group_move(gdat, gdpos):
                     self._notify_change()
                     self._notify_select()
             self.redraw()
@@ -521,6 +503,50 @@ class _ScriptEditGraphInputMixin:
         if callable(self.on_seek):
             self.on_seek(max(0.0, self.ms_of(event.x)))
         return "break"
+
+    def _selected_pos_values(self) -> list:
+        """選択中の点+パターンの点の (at, pos) 一覧。"""
+        m = self.model
+        out = []
+        for a in m.selection:
+            p = m.pos_of(a)
+            if p is not None:
+                out.append((a, p))
+        for gi in m.pattern_selection:
+            if 0 <= gi < len(m.patterns):
+                for a in m.patterns[gi]["ats"]:
+                    p = m.pos_of(a)
+                    if p is not None:
+                        out.append((a, p))
+        return out
+
+    def _group_anchor_pos(self, x: float, y: float):
+        """=320: 掴んだ画面位置に最も近い選択点の pos(無ければ None)。"""
+        best, bd = None, None
+        for a, p in self._selected_pos_values():
+            dd = (self.x_of(a) - x) ** 2 + (self.y_of(p) - y) ** 2
+            if bd is None or dd < bd:
+                best, bd = p, dd
+        return best
+
+    def _discrete_group_dpos(self, anchor, dpos: float) -> int:
+        """=320: 縦の Δ を「掴んだ点(anchor)がグリッド線に乗る量」にし、
+        選択全体が 0〜pos_max に収まるよう端で止める。"""
+        vals = [p for _a, p in self._selected_pos_values()]
+        if not vals:
+            return 0
+        lo, hi = min(vals), max(vals)
+        dpos = max(-lo, min(self.pos_max - hi, dpos))
+        g = self.grid_pos if self.grid_pos > 1 else 1
+        if anchor is None:
+            anchor = vals[0]
+        dq = snap(anchor + dpos, g) - anchor
+        # 吸着で端をはみ出したら 1 グリッド内側へ
+        while dq > 0 and hi + dq > self.pos_max:
+            dq -= g
+        while dq < 0 and lo + dq < 0:
+            dq += g
+        return int(dq)
 
     def _group_click_fallback(self, event):
         """掴み領域の中で動かさずに離した(=クリック)ときの従来操作(=202)。

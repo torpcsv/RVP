@@ -210,8 +210,9 @@ class _ScriptEditGraphPlanMixin:
     def _patmove_plan(self, event):
         """移動 D&D の plan(s 不変=仕様 5.4)。片側/両側接続も試す。
 
-        **=226: 離散的なスクリプト(pat_center あり)では時間方向だけ動く**
-        (縦に動かすと速度・強さが変わってしまうため。要望6/8)。
+        =226 では離散的なスクリプト(pat_center あり)は時間方向だけだったが、
+        **=320: 離散も縦に平行移動できる**(ユーザー決定)。縦の Δ は掴んだ
+        位置に最も近いパターンの点がグリッド線に乗る量(端で止める)。
         """
         idx = self.sel_pattern
         if idx is None or idx >= len(self.model.patterns):
@@ -220,10 +221,29 @@ class _ScriptEditGraphPlanMixin:
         x0, _t, x1, _b = self._plot()
         span = self.span_ms()
         dat = snap((event.x - d["x"]) * (span / (x1 - x0)), self.grid_at)
-        dpos = 0 if self.pat_center is not None else \
-            snap(self.pos_of_y(event.y) - self.pos_of_y(d["y"]),
-                 self.grid_pos)
         rec = self.model.patterns[idx]
+        raw = self.pos_of_y(event.y) - self.pos_of_y(d["y"])
+        if self.pat_center is not None:
+            vals = [self.model.pos_of(a) for a in rec["ats"]]
+            vals = [v for v in vals if v is not None]
+            if vals:
+                anchor = min(
+                    ((a, self.model.pos_of(a)) for a in rec["ats"]
+                     if self.model.pos_of(a) is not None),
+                    key=lambda ap: (self.x_of(ap[0]) - d["x"]) ** 2
+                    + (self.y_of(ap[1]) - d["y"]) ** 2)[1]
+                lo, hi = min(vals), max(vals)
+                raw = max(-lo, min(self.pos_max - hi, raw))
+                g = self.grid_pos if self.grid_pos > 1 else 1
+                dpos = snap(anchor + raw, g) - anchor
+                while dpos > 0 and hi + dpos > self.pos_max:
+                    dpos -= g
+                while dpos < 0 and lo + dpos < 0:
+                    dpos += g
+            else:
+                dpos = 0
+        else:
+            dpos = snap(raw, self.grid_pos)
         shape = rec["shape"]
         lo, hi = rec["ats"][0] + dat, rec["ats"][-1] + dat
         # =180: 端点そのものへの吸着は半グリッド以内だけ

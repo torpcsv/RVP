@@ -234,6 +234,9 @@ class ItemReviewDialog(_ItemReviewPlaybackMixin, _ItemReviewEditMixin, _ItemRevi
         self.btn_play.pack(side="left", padx=6)
         self.btn_fwd10 = small_btn("↻10", self.seek_fwd10, width=72)
         self.btn_fwd10.pack(side="left", padx=6)
+        # =313: キーの案内
+        Tooltip(self.btn_back10, lambda: tr("10秒戻る（Qキー）"))
+        Tooltip(self.btn_fwd10, lambda: tr("10秒進む（Eキー）"))
 
         vol_box = ctk.CTkFrame(row, fg_color="transparent")
         vol_box.pack(side="left", padx=(14, 0))
@@ -271,6 +274,15 @@ class ItemReviewDialog(_ItemReviewPlaybackMixin, _ItemReviewEditMixin, _ItemRevi
         # でも効く)。at/pos などの入力欄にカーソルがあるときは普通に空白を
         # 入れる(=223 の数字キーと同じ除外)。
         self.bind("<KeyPress-space>", self._on_space_key, add="+")
+        # =313: **Q=10秒戻る / E=10秒進む**(↺10/↻10 ボタンと同じ。レビュー
+        # 状態でも編集モードでも効く)。大文字(CapsLock/Shift)も同じ。
+        # 入力欄にカーソルがあるとき・Ctrl/Alt 併用は何もしない。
+        for ks in ("q", "Q"):
+            self.bind("<KeyPress-" + ks + ">",
+                      lambda e: self._on_seek_key(e, -10_000), add="+")
+        for ks in ("e", "E"):
+            self.bind("<KeyPress-" + ks + ">",
+                      lambda e: self._on_seek_key(e, 10_000), add="+")
 
         # ---- グラフ(スクリプトがあるときだけ出す) ----
         self.graph_box = ctk.CTkFrame(self, corner_radius=10, fg_color=BOX_BG,

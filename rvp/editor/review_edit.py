@@ -21,6 +21,17 @@ from . import common as _clr   # =301: テーマ追従する色定数は定義�
 from ._hooks import _pkg
 
 
+
+class _FkChain:
+    """=312: F キー長押しの数珠つなぎ(=222)の状態。打点先(左/右)ごとに1つ。"""
+    __slots__ = ("held", "chain_end", "job", "release_job")
+
+    def __init__(self):
+        self.held = None          # 押しっぱなし中の F キー
+        self.chain_end = None     # 次に置く起点(直前パターンの終端)
+        self.job = None           # 終端監視の after id
+        self.release_job = None   # KeyRelease の確定待ち(自動リピート)
+
 class _ItemReviewEditMixin:
     """ItemReviewDialog の mixin(=301 分割)。編集モード(構築・対象トラック・種別・サブ表示・数値欄・保存・未保存確認)"""
 
@@ -306,6 +317,14 @@ class _ItemReviewEditMixin:
         self._edit_active = 0
         g0.corner_text = tr("左（ロータ1）") if on else ""
         g1.corner_text = tr("右（ロータ2）") if on else ""
+        # =311/=312: 案内文とバッジ(F1左 F5右)を表示に合わせる
+        if getattr(self, "edit_fkey_hint", None) is not None:
+            from .. import script_edit
+            rot = getattr(self, "_edit_type", None) is not None and \
+                self._pat_mode() == script_edit.PAT_MODE_ROTATE
+            self.edit_fkey_hint.configure(
+                text=self._fkey_hint_text(on, rot))
+            self._refresh_fkey_badges()
         g0.set_active(True, peer_mode=on)
         g1.set_active(False, peer_mode=on)
         # =243: 左右2本のときは 上(左)=L / 下(右)=R を全高で描く
@@ -486,7 +505,9 @@ class _ItemReviewEditMixin:
         # バッジは tk.Label をボタンへ重ね置き(place)。画像へ文字を描く
         # より軽く、テーマ切替でも configure で色を変えるだけで済む。
         self._fkey_map = script_edit.load_fkey_map(load_config())
-        self._fkey_badges = {}          # ref → tk.Label
+        self._fkey_sides = script_edit.load_fkey_sides(load_config())  # =312
+        self._fkey_badges = {}          # ref → tk.Label(左上=左/1本表示)
+        self._fkey_badges_r = {}        # =314: ref → tk.Label(右上=右・緑)
         self._fkey_menu = None
         # 右クリックは **ダイアログ(Toplevel)のバインドタグ** で受ける。
         # CTkButton は画像ラベルを後から作る(U枠の登録時)ため、ボタン
@@ -650,10 +671,10 @@ class _ItemReviewEditMixin:
         # バインドタグで届く
         # =222: 押しっぱなしの数珠つなぎ。KeyPress/KeyRelease で受け、
         # OS の自動リピートは無視して**自前で「終端に来たら次を置く」**。
-        self._fkey_held = None          # 押しっぱなし中の F キー
-        self._fkey_chain_end = None     # 次に置く起点(直前パターンの終端)
-        self._fkey_job = None           # 終端監視の after id
-        self._fkey_release_job = None   # KeyRelease の確定待ち(自動リピート)
+        # =312: 数珠つなぎの状態は**打点先(左=0/右=1)ごと**に持つ。
+        # F1(左)を押しっぱなしにしたまま F5(右)を押す使い方のため。
+        # 1本表示のときは常に [0] を使う(_fkey_held 等は互換用の別名)。
+        self._fk_chain = [_FkChain(), _FkChain(), _FkChain()]   # [2]=両方
         for fk in script_edit.FKEYS:
             self.bind("<KeyPress-" + fk + ">",
                       lambda _e, k=fk: self._on_fkey_press(k), add="+")
@@ -662,13 +683,19 @@ class _ItemReviewEditMixin:
         # =223: 数字キーで打点(0=pos0 / 1=pos10 … 9=pos90 / +=pos100)。
         # テンキー(NumLock ON)とメインの数字行の両方。at/pos の入力欄に
         # カーソルがあるときは数字入力を優先する(_key_target_is_entry)。
+        # =311: 左右2本(UFOTW)のときは**メインの数字行=左(ロータ1)・
+        # テンキー=右(ロータ2)**に固定する(1本表示のときは両方とも今のグラフ)。
         for d in range(10):
-            for seq in ("<KeyPress-" + str(d) + ">",
-                        "<KeyPress-KP_" + str(d) + ">"):
-                self.bind(seq, lambda _e, v=d * 10: self._on_pos_key(v),
-                          add="+")
-        for seq in ("<KeyPress-plus>", "<KeyPress-KP_Add>"):
-            self.bind(seq, lambda _e: self._on_pos_key(100), add="+")
+            self.bind("<KeyPress-" + str(d) + ">",
+                      lambda _e, v=d * 10: self._on_pos_key(v, side=0),
+                      add="+")
+            self.bind("<KeyPress-KP_" + str(d) + ">",
+                      lambda _e, v=d * 10: self._on_pos_key(v, side=1),
+                      add="+")
+        self.bind("<KeyPress-plus>",
+                  lambda _e: self._on_pos_key(100, side=0), add="+")
+        self.bind("<KeyPress-KP_Add>",
+                  lambda _e: self._on_pos_key(100, side=1), add="+")
 
         # ---- グラフ ----
         # =232: 2本作る。1本目は常に出し、2本目(右=ロータ2)は5列csvの
@@ -725,11 +752,7 @@ class _ItemReviewEditMixin:
         self.edit_hint_label.pack(fill="x", pady=(4, 0))
         # =213: リアルタイム配置のヒント(2行目)
         self.edit_fkey_hint = ctk.CTkLabel(
-            inner,
-            text=tr("F1〜F9=割り当てたパターンを再生位置へ上書き配置（長押しで数珠つなぎ） "
-                    "／ 割り当て=パターンボタンを右クリック "
-                    "／ 数字キー=再生位置へ打点（0〜9=pos0〜90・+=pos100） "
-                    "／ 矢印キー=選択中の点・パターンを1グリッド移動（長押しで連続）"),
+            inner, text=self._fkey_hint_text(False),
             font=ctk.CTkFont(size=11), text_color=MUTED, anchor="w")
         self.edit_fkey_hint.pack(fill="x", pady=(0, 0))
         # =227: サブ表示の選択(ショートカットキーの説明の下・枠線の中)
@@ -753,6 +776,46 @@ class _ItemReviewEditMixin:
             inner, text="", font=ctk.CTkFont(size=11), anchor="w",
             justify="left", wraplength=self.EDIT_WIN_W - 80)
         self.edit_msg.pack(fill="x", pady=(2, 0))
+
+    @staticmethod
+    def _fkey_hint_text(pair: bool, rotate: bool = False) -> str:
+        """=213 のショートカット案内。=311/=312: 左右2本のときは打点先の
+        説明に差し替える。=313: Q/E の 10 秒移動を追記。=317: 回転
+        (csv・rotate funscript)は数字キーの対応表が違う。"""
+        if pair:
+            return tr("F1〜F9=割り当てたパターンを割り当てた側へ上書き配置（長押しで数珠つなぎ・左右別々） "
+                      "／ 割り当て=パターンボタンを右クリック "
+                      "／ 数字キー=再生位置へ打点：数字行=左（ロータ1）・テンキー=右（ロータ2）（1〜9=速度-70〜+70・5=停止） "
+                      "／ 矢印キー=選択中の点・パターンを1グリッド移動 "
+                      "／ Q・E=10秒戻る・進む")
+        if rotate:
+            return tr("F1〜F9=割り当てたパターンを再生位置へ上書き配置（長押しで数珠つなぎ） "
+                      "／ 割り当て=パターンボタンを右クリック "
+                      "／ 数字キー=再生位置へ打点（1〜9=速度-70,-60,-50,-40,0,+40,+50,+60,+70） "
+                      "／ 矢印キー=選択中の点・パターンを1グリッド移動（長押しで連続） "
+                      "／ Q・E=10秒戻る・進む")
+        return tr("F1〜F9=割り当てたパターンを再生位置へ上書き配置（長押しで数珠つなぎ） "
+                  "／ 割り当て=パターンボタンを右クリック "
+                  "／ 数字キー=再生位置へ打点（0〜9=pos0〜90・+=pos100） "
+                  "／ 矢印キー=選択中の点・パターンを1グリッド移動（長押しで連続） "
+                  "／ Q・E=10秒戻る・進む")
+
+    # =312: _fkey_held 等は =222 当時の名前の互換(1本表示=側0)。
+    @property
+    def _fkey_held(self):
+        return self._fk_chain[0].held
+
+    @property
+    def _fkey_chain_end(self):
+        return self._fk_chain[0].chain_end
+
+    @property
+    def _fkey_job(self):
+        return self._fk_chain[0].job
+
+    @property
+    def _fkey_release_job(self):
+        return self._fk_chain[0].release_job
 
     @classmethod
     def load_edit_height(cls, cfg=None) -> int:

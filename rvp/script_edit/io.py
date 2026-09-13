@@ -103,50 +103,97 @@ def _valid_fkey_ref(v, n_std: int):
     return None
 
 
-def load_fkey_map(cfg: dict) -> dict:
-    """config から {"F1": ref, ...} を読む(=212)。不正なキー・参照は無視。
-    同じ参照が複数キーにあれば若いキーだけ残す(排他の保険)。"""
+# =312: F キーの打点先(5列csv=UFOTW の左右2本のときだけ意味を持つ)。
+# config には "side": "L"/"R"/"B" で持つ(0=左 / 1=右 / 2=両方=1キーで左右へ
+# 同時に置く。=314)。無い/不正は L(=0)。
+FKEY_SIDES = ("L", "R", "B")
+FKEY_SIDE_BOTH = 2
+
+
+def _valid_fkey_side(v) -> int:
+    try:
+        return FKEY_SIDES.index(str(v.get("side") or "L").upper())
+    except (ValueError, AttributeError):
+        return 0
+
+
+def _load_fkeys_full(cfg: dict) -> dict:
+    """{"F1": (ref, side), ...}。不正なキー・参照は無視。同じ (参照, 側) が
+    複数キーにあれば若いキーだけ残す(排他の保険)。"""
     out = {}
     raw = (cfg.get("script_edit") or {}).get("fkeys") or {}
     if not isinstance(raw, dict):
         return out
     seen = set()
     for fk in FKEYS:
-        ref = _valid_fkey_ref(raw.get(fk), len(STD_PATTERNS))
-        if ref is None or ref in seen:
+        v = raw.get(fk)
+        ref = _valid_fkey_ref(v, len(STD_PATTERNS))
+        if ref is None:
             continue
-        seen.add(ref)
-        out[fk] = ref
+        side = _valid_fkey_side(v)
+        if (ref, side) in seen:
+            continue
+        seen.add((ref, side))
+        out[fk] = (ref, side)
     return out
 
 
-def save_fkey_map(cfg: dict, fkey: str, ref) -> dict:
+def load_fkey_map(cfg: dict) -> dict:
+    """config から {"F1": ref, ...} を読む(=212)。不正なキー・参照は無視。
+    =312: 排他は (参照, 側) の組。同じパターンを F1 左・F5 右に置ける。"""
+    return {fk: ref for fk, (ref, _side) in _load_fkeys_full(cfg).items()}
+
+
+def load_fkey_sides(cfg: dict) -> dict:
+    """=312: {"F1": 0|1, ...}(0=左(ロータ1) / 1=右(ロータ2))。"""
+    return {fk: side for fk, (_ref, side) in _load_fkeys_full(cfg).items()}
+
+
+def save_fkey_map(cfg: dict, fkey: str, ref, side=None) -> dict:
     """config 辞書へ割り当てを書く(=212。保存は呼び出し側)。
-    ref=None は解除。排他: 同じ ref を持つ他のキーは外す(=移動)。"""
+    ref=None は解除。排他: 同じ ref を持つ他のキーは外す(=移動)。
+    =312: side(0=左/1=右)を渡すと排他は (ref, side) の組で判定し、
+    別の側にある同じ ref は残す。side=None(1本表示からの割り当て)は
+    従来どおり ref だけで排他し、側は左(0)として保存する。"""
     se = cfg.setdefault("script_edit", {})
     if not isinstance(se, dict):
         se = cfg["script_edit"] = {}
-    cur = load_fkey_map(cfg)
+    cur = _load_fkeys_full(cfg)
     if fkey not in FKEYS:
         return cfg
     if ref is None:
         cur.pop(fkey, None)
     else:
-        for k in [k for k, r in cur.items() if r == ref]:
+        ref = tuple(ref)
+        for k in [k for k, (r, sd) in cur.items()
+                  if r == ref and (side is None or sd == side)]:
             del cur[k]
-        cur[fkey] = tuple(ref)
-    se["fkeys"] = {k: ({"kind": "std", "index": int(r[1])} if r[0] == "std"
-                       else {"kind": "user", "slot": int(r[1])})
-                   for k, r in cur.items()}
+        cur[fkey] = (ref, int(side or 0))
+    se["fkeys"] = {}
+    for k, (r, sd) in cur.items():
+        d = {"kind": "std", "index": int(r[1])} if r[0] == "std" \
+            else {"kind": "user", "slot": int(r[1])}
+        d["side"] = FKEY_SIDES[sd]
+        se["fkeys"][k] = d
     return cfg
 
 
 def fkey_of(fmap: dict, ref):
-    """ref に割り当てられている F キー名(無ければ None)。"""
+    """ref に割り当てられている F キー名(無ければ None。複数なら若い方)。"""
     for k, r in fmap.items():
         if tuple(r) == tuple(ref):
             return k
     return None
+
+
+def fkeys_of(fmap: dict, sides: dict, ref) -> list:
+    """=312: ref に割り当てられている [(Fキー名, 側), ...](キー順)。"""
+    out = []
+    for k in FKEYS:
+        r = fmap.get(k)
+        if r is not None and tuple(r) == tuple(ref):
+            out.append((k, int(sides.get(k, 0))))
+    return out
 
 
 def load_funscript_raw(path: str) -> tuple[dict, list[tuple[int, int]]]:

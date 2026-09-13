@@ -135,6 +135,21 @@ class _ItemReviewPlaybackMixin:
         self.toggle_play()
         return "break"
 
+    def _on_seek_key(self, event, delta_ms: int):
+        """=313: Q/E キー=10秒戻る/進む。入力欄では普通の文字を入れる。"""
+        if self._key_target_is_entry():
+            return None
+        state = int(getattr(event, "state", 0) or 0)
+        # Ctrl(0x4)/Alt(Windows=0x20000)併用は何もしない。**0x8 は見ない**
+        # (Windows では NumLock ON のビット=テンキー打点中は常に立っている。
+        # v311 の実機で Q/E が効かなかった原因)
+        if state & 0x4 or state & 0x20000:
+            return None
+        if self._duration_ms <= 0:
+            return "break"
+        self.seek(self._now_ms() + delta_ms)
+        return "break"
+
     def toggle_play(self):
         if self._playing:
             self.pause()

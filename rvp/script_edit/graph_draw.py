@@ -22,16 +22,37 @@ class _ScriptEditGraphDrawMixin:
                 return col
         return None
 
-    @staticmethod
-    def fmt_time_ms(ms: float) -> str:
-        """時間軸ラベル(=210: **hh:mm:ss.FFF**・日英共通。
-        =179 のミリ秒精度はそのまま)。"""
+    def fmt_time_ms(self, ms: float, hours=None) -> str:
+        """時間軸ラベル(=210: 日英共通・=179 のミリ秒精度はそのまま)。
+        =318: 普段は **mm:ss.fff**、素材が 1 時間以上(time_hours)のときだけ
+        **hh:mm:ss.fff**。hours を渡すと明示できる。"""
+        if hours is None:
+            hours = getattr(self, "time_hours", False)
         neg = ms < 0
         ms = int(round(abs(ms)))
         h, rem = divmod(ms, 3600_000)
         m, rem = divmod(rem, 60_000)
         s, f = divmod(rem, 1000)
-        return ("-" if neg else "") + f"{h:02d}:{m:02d}:{s:02d}.{f:03d}"
+        if hours or h:
+            return ("-" if neg else "") + f"{h:02d}:{m:02d}:{s:02d}.{f:03d}"
+        return ("-" if neg else "") + f"{m:02d}:{s:02d}.{f:03d}"
+
+    def fmt_guide_time(self, ms: float) -> str:
+        """=319: ガイド表示の時間。csv(分解能 200=100ms 単位)は小数 1 桁。"""
+        txt = self.fmt_time_ms(ms)
+        return txt[:-2] if self.pos_max == 200 else txt
+
+    def guide_text(self, at: float, pos: float) -> str:
+        """=319: マウス位置のガイド文言(グリッド吸着後の値)。"""
+        t = self.fmt_guide_time(at)
+        c = self.pat_center
+        if c is not None and c > 0:
+            # 回転(csv=中心 100 / rotate funscript=中心 50): 符号付きの速度
+            spd = int(round((pos - c) * 100.0 / c))
+            return tr("時間={0} 回転速度={1}").format(t, f"{spd:+d}" if spd else "0")
+        if c == 0:
+            return tr("時間={0} 強さ={1}").format(t, int(pos))
+        return tr("時間={0} 位置={1}").format(t, int(pos))
 
     @staticmethod
     def fmt_scale_s(sec: float) -> str:
@@ -46,6 +67,15 @@ class _ScriptEditGraphDrawMixin:
             return tr("{0}分").format(m)
         return tr("{0}分{1}秒").format(m, f"{s:g}")
 
+    def _guide_font(self):
+        """=319: ガイド文言の幅計測用フォント(1度だけ作る)。"""
+        fnt = getattr(self, "_gd_font", None)
+        if fnt is None:
+            import tkinter.font as tkfont
+            fnt = tkfont.Font(root=self, family=appfont.FAMILY, size=9)
+            self._gd_font = fnt
+        return fnt
+
     def label_px(self) -> int:
         """時間ラベル1つぶんの幅(px)。=210: hh:mm:ss.FFF の実測。
         フォントは1度だけ作って使い回す。"""
@@ -54,7 +84,9 @@ class _ScriptEditGraphDrawMixin:
             import tkinter.font as tkfont
             fnt = tkfont.Font(root=self, family=appfont.FAMILY, size=8)
             self._lbl_font = fnt
-        return int(fnt.measure("00:00:00.000"))
+        return int(fnt.measure("00:00:00.000" if getattr(self, "time_hours",
+                                                          False)
+                               else "00:00.000"))
 
     def _plot(self):
         """描画領域 (x0, top, x1, bot)。=210: 上端に縮尺表示の帯
@@ -475,6 +507,23 @@ class _ScriptEditGraphDrawMixin:
             if cp is not None:
                 cy = self.y_of(cp)
                 self.create_line(x0, cy, w, cy, fill=ccol, width=1)
+                # =319: カーソルの右上に「時間=00:10.000 位置=50」
+                # (黒背景・白文字。右端・上端では内側へ折り返す)
+                mx, my = self._mouse_xy if self._mouse_xy else (cx, cy)
+                txt = self.guide_text(ca, cp)
+                fnt = (appfont.FAMILY, 9)
+                tw = self._guide_font().measure(txt) + 8
+                th = 16
+                gx = mx + 12
+                gy = my - 10
+                if gx + tw > w:
+                    gx = mx - 12 - tw
+                if gy - th < 0:
+                    gy = my + 10 + th
+                self.create_rectangle(gx, gy - th, gx + tw, gy,
+                                      fill="#000000", outline="")
+                self.create_text(gx + 4, gy - th / 2, anchor="w",
+                                 text=txt, fill="#ffffff", font=fnt)
 
         # 点モードのゴースト(=176: 打点できる位置だけに出る)
         if self._point_ghost is not None and self._drag is None:

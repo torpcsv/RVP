@@ -184,12 +184,39 @@ EN: dict[str, str] = {
     "この位置にはパターンを配置できません":
         "The pattern cannot be placed at this position",
     "速度:": "Speed:",
-    "F1〜F9=割り当てたパターンを再生位置へ上書き配置（長押しで数珠つなぎ） ／ 割り当て=パターンボタンを右クリック ／ 数字キー=再生位置へ打点（0〜9=pos0〜90・+=pos100） ／ 矢印キー=選択中の点・パターンを1グリッド移動（長押しで連続）":
+    "F1〜F9=割り当てたパターンを再生位置へ上書き配置（長押しで数珠つなぎ） ／ 割り当て=パターンボタンを右クリック ／ 数字キー=再生位置へ打点（0〜9=pos0〜90・+=pos100） ／ 矢印キー=選択中の点・パターンを1グリッド移動（長押しで連続） ／ Q・E=10秒戻る・進む":
         "F1–F9 = place the assigned pattern at the playback position "
         "(overwrite; hold to chain) / Assign = right-click a pattern button / "
         "Number keys = add a point at the playback position "
         "(0–9 = pos 0–90, + = pos 100) / "
-        "Arrow keys = move the selection by one grid step (hold to repeat)",
+        "Arrow keys = move the selection by one grid step (hold to repeat) / "
+        "Q / E = 10 s back / forward",
+    # =311/=312/=313: 左右2本(UFOTW)のときの案内
+    "F1〜F9=割り当てたパターンを割り当てた側へ上書き配置（長押しで数珠つなぎ・左右別々） ／ 割り当て=パターンボタンを右クリック ／ 数字キー=再生位置へ打点：数字行=左（ロータ1）・テンキー=右（ロータ2）（1〜9=速度-70〜+70・5=停止） ／ 矢印キー=選択中の点・パターンを1グリッド移動 ／ Q・E=10秒戻る・進む":
+        "F1–F9 = place the assigned pattern on its assigned side "
+        "(overwrite; hold to chain, left and right independently) / "
+        "Assign = right-click a pattern button / "
+        "Number keys = add a point at the playback position: "
+        "number row = L (rotor 1), numpad = R (rotor 2) "
+        "(1–9 = speed -70 to +70, 5 = stop) / "
+        "Arrow keys = move the selection by one grid step / "
+        "Q / E = 10 s back / forward",
+    # =317: 回転(a10 の rotate funscript など・1本表示)の案内
+    "F1〜F9=割り当てたパターンを再生位置へ上書き配置（長押しで数珠つなぎ） ／ 割り当て=パターンボタンを右クリック ／ 数字キー=再生位置へ打点（1〜9=速度-70,-60,-50,-40,0,+40,+50,+60,+70） ／ 矢印キー=選択中の点・パターンを1グリッド移動（長押しで連続） ／ Q・E=10秒戻る・進む":
+        "F1–F9 = place the assigned pattern at the playback position "
+        "(overwrite; hold to chain) / Assign = right-click a pattern button / "
+        "Number keys = add a point at the playback position "
+        "(1–9 = speed -70, -60, -50, -40, 0, +40, +50, +60, +70) / "
+        "Arrow keys = move the selection by one grid step (hold to repeat) / "
+        "Q / E = 10 s back / forward",
+    "両方（同時）": "Both (at once)",
+    "両": "B",
+    # =319: マウス位置のガイド
+    "時間={0} 位置={1}": "Time={0} Pos={1}",
+    "時間={0} 回転速度={1}": "Time={0} Speed={1}",
+    "時間={0} 強さ={1}": "Time={0} Strength={1}",
+    "10秒戻る（Qキー）": "Back 10 s (Q key)",
+    "10秒進む（Eキー）": "Forward 10 s (E key)",
     "再生速度（音声は音の高さも変わります。時間補正は素材の時間のまま）":
         "Playback speed (audio pitch changes too; the time offset stays "
         "in material time)",

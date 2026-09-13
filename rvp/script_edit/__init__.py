@@ -44,7 +44,8 @@ from .patterns import (K_MAX, K_MIN, K_STRETCH_MAX, S_MAX, S_MIN,
     plan_normal, plan_connect_side, plan_connect_both)  # noqa: F401
 from .io import (normalize_user_shape, _valid_user_shape, load_user_patterns,
     save_user_pattern, first_free_slot, _valid_fkey_ref, load_fkey_map,
-    save_fkey_map, fkey_of, load_funscript_raw, dump_funscript,
+    save_fkey_map, fkey_of, load_fkey_sides, fkeys_of, FKEY_SIDES, FKEY_SIDE_BOTH,
+    load_funscript_raw, dump_funscript,
     write_funscript, CSV_AT_UNIT, CSV_POS_MAX, CSV_STOP_POS, csv_pos_of,
     csv_val_of, csv_hold_pos, load_csv_points, dump_csv, write_csv)  # noqa: F401
 from .model import (EditLink, ScriptEditModel)  # noqa: F401

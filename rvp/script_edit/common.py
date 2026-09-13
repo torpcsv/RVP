@@ -1,6 +1,8 @@
 """スクリプト編集の共通: 定数(ユーザーパターン/Fキー/グリッド/Undo)・波形帯・目盛り・スナップ。"""
 from __future__ import annotations
 
+import math
+
 from ..i18n import tr
 
 
@@ -157,9 +159,10 @@ def scale_shape(shape, pos_max: int):
     分解能へ縦に伸ばす(csv=200 なら 2 倍・中心 50→100)。100 のときは
     そのまま返す。"""
     f = int(pos_max) / 100.0
-    if abs(f - 1.0) < 1e-9:
-        return tuple(shape)
-    return tuple((t, int(round(p * f))) for t, p in shape)
+    # =315: 定義が小数(67.5 など)のことがあるので、倍率 1 でも整数へ丸める。
+    # 丸めは「.5 は切り上げ」(round() の偶数丸めだと 67.5→68・72.5→72 と
+    # 揃わない)。
+    return tuple((t, int(math.floor(p * f + 0.5))) for t, p in shape)
 
 
 def grid_at_label(step: int, unit_none: str) -> str:
