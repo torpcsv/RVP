@@ -615,7 +615,9 @@ class _RVPAppTabConnectionMixin:
         if frac <= 0:
             return 0.0, positive
         rmin, rmax = self.intiface._lane_range(lane)
-        speed = max(0.0, min(1.0, rmin + frac * (rmax - rmin)))
+        # =329: 表示は補正後の値をそのまま(100% 超は「頭打ちで動作中」を
+        # バーで見せる。デバイスへは 1.0 で送る)
+        speed = max(0.0, rmin + frac * (rmax - rmin))
         return speed, positive
 
     def _show_rotate_split(self, lane, ch_key, bar, label, connected):
@@ -636,7 +638,7 @@ class _RVPAppTabConnectionMixin:
         def part(sp, positive):
             if sp <= 0:
                 return "0"
-            pct = int(round(sp * 100))
+            pct = int(round(min(1.0, sp) * 100))    # =331: 数値は動作指示(頭打ち)
             return f"{pct}" if positive else f"-{pct}"
 
         # 表示は「左/右」を横幅を取らない「30/30」形式にする(逆回転は負符号)。

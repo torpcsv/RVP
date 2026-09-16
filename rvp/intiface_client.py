@@ -159,50 +159,61 @@ class IntifaceClient:
                        if c not in " -_　")
         return "a10cyclone" in norm
 
+    # =323: 出力補正の上限(UI値)。100 を超えた分は**増幅**として働き、
+    # 実出力は 1.0(物理上限)で頭打ちにする(ユーザー決定: 150%・5刻み)。
+    SCALE_MAX = 150
+
+    @classmethod
+    def clamp_scale(cls, rmin, rmax) -> tuple[int, int]:
+        """出力補正の UI 値を 0〜SCALE_MAX・min<=max に揃える(=323)。"""
+        rmin = max(0, min(cls.SCALE_MAX, int(rmin)))
+        rmax = max(rmin, min(cls.SCALE_MAX, int(rmax)))
+        return rmin, rmax
+
     def set_rotate_range(self, rmin: int, rmax: int) -> None:
-        """回転強度レンジを設定する(0-100のUI値)。再生中でも即時反映される。"""
-        rmin = max(0, min(100, int(rmin)))
-        rmax = max(rmin, min(100, int(rmax)))
+        """回転強度レンジを設定する(0-150のUI値・=323)。再生中でも即時反映される。"""
+        rmin, rmax = self.clamp_scale(rmin, rmax)
         self.rotate_min = rmin / 100.0
         self.rotate_max = rmax / 100.0
 
     def set_rotate_a10_range(self, rmin: int, rmax: int) -> None:
-        """rotate(A10)の強度レンジを設定する(0-100のUI値)。"""
-        rmin = max(0, min(100, int(rmin)))
-        rmax = max(rmin, min(100, int(rmax)))
+        """rotate(A10)の強度レンジを設定する(0-150のUI値・=323)。"""
+        rmin, rmax = self.clamp_scale(rmin, rmax)
         self.rotate_a10_min = rmin / 100.0
         self.rotate_a10_max = rmax / 100.0
 
     def set_vibration_range(self, rmin: int, rmax: int) -> None:
-        """振動強度レンジを設定する(0-100のUI値)。再生中でも即時反映される。"""
-        rmin = max(0, min(100, int(rmin)))
-        rmax = max(rmin, min(100, int(rmax)))
+        """振動強度レンジを設定する(0-150のUI値・=323)。再生中でも即時反映される。"""
+        rmin, rmax = self.clamp_scale(rmin, rmax)
         self.vibration_min = rmin / 100.0
         self.vibration_max = rmax / 100.0
 
-    def map_rotate_speed(self, pos: int) -> tuple[float, bool]:
+    def map_rotate_speed(self, pos: int, clip: bool = True) -> tuple[float, bool]:
         """posを実出力の(speed, clockwise)へ変換する(強度レンジ適用済み)。
 
         pos=50は強度レンジに関わらず停止(speed 0)。動作中(pos≠50)は
         速度率|pos-50|/50を[rotate_min, rotate_max]へ線形写像する。
         例: レンジ20-100でpos=75 → 0.5 → 20+0.5*(100-20)=60%
+        =323: レンジ0-150でpos=75 → 0.5 → 75% / pos=90 → 0.8 → 120%→**100%**
+        (100 を超えた分は増幅。実出力は 1.0 で頭打ち)
         """
         frac, clockwise = self.rotate_params(pos)
         if frac <= 0.0:
             return 0.0, clockwise
         speed = self.rotate_min + frac * (self.rotate_max - self.rotate_min)
-        return max(0.0, min(1.0, speed)), clockwise
+        # =329: clip=False は表示用(補正後の値をそのまま。100% 超=頭打ち中)
+        return (max(0.0, min(1.0, speed)) if clip else max(0.0, speed)), clockwise
 
-    def map_rotate_a10_speed(self, pos: int) -> tuple[float, bool]:
+    def map_rotate_a10_speed(self, pos: int, clip: bool = True) -> tuple[float, bool]:
         """rotate(A10)用のpos→(speed, clockwise)変換(専用レンジ適用)。"""
         frac, clockwise = self.rotate_params(pos)
         if frac <= 0.0:
             return 0.0, clockwise
         speed = self.rotate_a10_min + frac * (self.rotate_a10_max
                                               - self.rotate_a10_min)
-        return max(0.0, min(1.0, speed)), clockwise
+        return (max(0.0, min(1.0, speed)) if clip else max(0.0, speed)), clockwise
 
-    def map_vibration_speed(self, pos: int) -> float:
+    def map_vibration_speed(self, pos: int, clip: bool = True) -> float:
         """posを実出力の振動強度へ変換する(強度レンジ適用済み)。
 
         pos=0は強度レンジに関わらず停止。pos=1〜100は
@@ -213,7 +224,7 @@ class IntifaceClient:
             return 0.0
         frac = pos / 100.0
         speed = self.vibration_min + frac * (self.vibration_max - self.vibration_min)
-        return max(0.0, min(1.0, speed))
+        return max(0.0, min(1.0, speed)) if clip else max(0.0, speed)
 
     def set_linear_range(self, range_min: int, range_max: int) -> None:
         """駆動区間を設定する(0 <= min <= max <= 100)。再生中でも即時反映される。"""
@@ -609,7 +620,9 @@ class IntifaceClient:
         a, b = channel_vals[0], channel_vals[1]
         if rotors == 1:
             # OR: 速度率(frac)の大きい方。同値は a(ch0=左)優先。
-            return [a if a[1] >= b[1] else b]
+            # =324: 規則は rotate_source.merge_two_channels に一本化
+            from .rotate_source import merge_two_channels
+            return [merge_two_channels(a, b)]
         left, right = (b, a) if swap else (a, b)
         out = [left, right]
         # 3ロータ以上の想定外機はch0で埋める(安全側)

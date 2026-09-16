@@ -182,7 +182,7 @@ class _RVPAppPlayControlsMixin:
     def _build_offset_cell(self, parent, dtype: str) -> ctk.CTkFrame:
         """スライダー行の右側に置く「動作タイミング」入力セルを作る。"""
         cell = ctk.CTkFrame(parent, fg_color="transparent")
-        ctk.CTkLabel(cell, text=tr("動作タイミング"),
+        ctk.CTkLabel(cell, text=tr("タイミング"),     # =333: 短く(右側を狭く)
                      font=ctk.CTkFont(size=11), text_color=LABEL,
                      ).pack(side="left", padx=(0, 4))
         var = tk.StringVar(value="0.0")

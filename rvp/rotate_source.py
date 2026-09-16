@@ -73,6 +73,18 @@ class RotateTimeline:
         return cls(1, steps, "funscript", getattr(funscript, "path", ""))
 
 
+def merge_two_channels(a, b):
+    """2チャンネル(左右)の値を**1ロータ**へ統合する規則(=324)。
+
+    a, b: (clockwise, frac)。速度率(frac)の大きい方を採用し、両方 0 なら
+    停止、同速は a(ch0=左)優先。再生時の N=2→M=1 写像
+    (IntifaceClient.map_channels_to_rotors)と UFOTW→UFOSA 変換
+    (script_edit.merge_csv_channels)の**両方がこの関数を使う**ので、
+    再生と変換の結果がずれない。
+    """
+    return a if a[1] >= b[1] else b
+
+
 def _to_int(s: str, where: str) -> int:
     try:
         return int(float(s))

@@ -109,7 +109,8 @@ class _RVPAppPollMixin:
             if invert:
                 positive = not positive   # 反転=回転方向が入れ替わる(大きさ維持)
             bar.set_value(speed)
-            pct = int(round(speed * 100))
+            # =331: 数値は実際の動作指示(100 で頭打ち)。バーは補正後(100 超)
+            pct = int(round(min(1.0, speed) * 100))
             if positive:
                 self._apply(label, text=f"{pct}",
                             text_color=OK_TEXT if connected else gray)
@@ -125,7 +126,7 @@ class _RVPAppPollMixin:
                                     r_on)
         else:
             rpos = st.get("rotate_pos", 50)
-            speed, _cw = self.intiface.map_rotate_speed(rpos)
+            speed, _cw = self.intiface.map_rotate_speed(rpos, clip=False)  # =329
             show_rotate(rpos, speed, self.rotate_invert_var.get(),
                         self.rotate_bar, self.rotate_value_label, r_on)
 
@@ -136,14 +137,14 @@ class _RVPAppPollMixin:
                                     self.a10_bar, self.a10_value_label, a_on)
         else:
             apos = st.get("rotate_a10_pos", 50)
-            aspeed, _acw = self.intiface.map_rotate_a10_speed(apos)
+            aspeed, _acw = self.intiface.map_rotate_a10_speed(apos, clip=False)
             show_rotate(apos, aspeed, self.a10_invert_var.get(),
                         self.a10_bar, self.a10_value_label, a_on)
 
         # vibration表示: バー + 実出力強度(強度レンジ適用後)の数値
         vib_on = self._track_conn.get("vibration", False)
         vpos = st.get("vibration_pos", 0)
-        vspeed = self.intiface.map_vibration_speed(vpos)
+        vspeed = self.intiface.map_vibration_speed(vpos, clip=False)   # =329
         if vpos <= 0 or vspeed <= 0:
             self.vibration_bar.set_value(None)
             self._apply(self.vibration_value_label, text=tr("停止"),
@@ -152,7 +153,7 @@ class _RVPAppPollMixin:
         else:
             self.vibration_bar.set_value(vspeed)
             self._apply(self.vibration_value_label,
-                        text=f"{int(round(vspeed * 100))}",
+                        text=f"{int(round(min(1.0, vspeed) * 100))}",   # =331
                         text_color=OK_TEXT if vib_on
                         else self.TRACK_DISABLED_COLOR)
 

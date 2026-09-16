@@ -203,6 +203,9 @@ class _RVPAppHeaderMixin:
         self.lang_var = tk.StringVar(value="日本語" if LANG == "ja" else "English")
         self.appearance_var = tk.StringVar(value="")
         self.graph_fps_var = tk.StringVar(value="60fps")
+        # =328: デバイス出力補正の上限(100%=従来 / 150%=100 超の増幅を解放)。
+        # 既定 100%(LINEAR/TWIST と見た目を揃える。使う人だけ 150 にする)
+        self.scale_max_var = tk.StringVar(value="100%")
         # =262: 背景イラストの表示ON/OFF(視聴側設定。既定=表示する)。
         self.show_bg_var = tk.BooleanVar(value=True)
         # =263: 背景イラストの透け具合(弱/中/強。既定=中)。
@@ -371,6 +374,14 @@ class _RVPAppHeaderMixin:
             text_color=COMBO_TEXT,
             text_color_disabled=COMBO_TEXT_DISABLED,
             command=self._on_graph_fps_change).pack(side="left")
+        # =328: デバイス出力補正上限(100%/150%)。「描画更新頻度」の下(ユーザー決定)
+        ctk.CTkOptionMenu(
+            row(tr("デバイス出力補正上限")), variable=self.scale_max_var,
+            width=130, height=26, values=["100%", "150%"],
+            fg_color=("gray80", "gray25"), button_color=("gray72", "gray30"),
+            text_color=COMBO_TEXT,
+            text_color_disabled=COMBO_TEXT_DISABLED,
+            command=self._on_scale_max_change).pack(side="left")
         # =262: 背景イラストの表示ON/OFF。シナリオが背景を指定していても、
         # 視聴する人がここでOFFにできる(最終決定は視聴側)。
         # =263: UI全体を半透明化する方式になったため「透け具合」も選べる。
@@ -487,6 +498,33 @@ class _RVPAppHeaderMixin:
                 dlg.refresh_ms = self._graph_interval_ms
         except Exception:
             pass
+
+    def _scale_max(self) -> int:
+        """=328: 設定「デバイス出力補正上限」の値(100 or 150)。"""
+        return 150 if "150" in str(self.scale_max_var.get()) else 100
+
+    def _on_scale_max_change(self, _choice=None):
+        """=328: 出力補正上限(100%/150%)を反映し設定へ保存する。"""
+        self._apply_scale_max(self._scale_max())
+        self.save_app_config()
+
+    def _apply_scale_max(self, dmax: int):
+        """=328: ROTATE(ufo/a10)・VIBRATION のスライダー上限・目印線・
+        状態バーの右端を dmax(100/150)に揃える。100 へ戻すときに 100 超の
+        値は切り詰め、その場でクライアントへも反映する。"""
+        mark = 100 if dmax > 100 else None
+        for slider, bar, cb in (
+                (self.rotate_scale_slider, self.rotate_bar,
+                 self._on_rotate_range_change),
+                (self.a10_scale_slider, self.a10_bar,
+                 self._on_a10_range_change),
+                (self.vibration_scale_slider, self.vibration_bar,
+                 self._on_vibration_range_change)):
+            bar.set_domain_max(dmax)
+            if slider.set_bounds(dmax, mark):
+                cb(slider.val_min, slider.val_max)
+            else:
+                bar.set_range(slider.val_min, slider.val_max)
 
     def _toggle_theme(self):
         """外観を ダーク⇄ライト で即時切替する。

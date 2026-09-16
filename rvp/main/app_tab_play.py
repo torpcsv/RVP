@@ -369,8 +369,9 @@ class _RVPAppTabPlayMixin:
                 command=command)
 
         def value_cell(text=tr("停止")):
+            # =333: 「100→100」が入っても列幅が変わらない幅(54→72)
             return ctk.CTkLabel(
-                grid, text=text, width=54, height=14, anchor="w",
+                grid, text=text, width=72, height=14, anchor="w",
                 font=ctk.CTkFont(size=11, weight="bold"), text_color=LABEL)
 
         # トラックのグループ(並び替え・未接続の灰色表示用)
@@ -433,6 +434,8 @@ class _RVPAppTabPlayMixin:
         # --- ROTATE ---
         self.rotate_scale_label, rot_head, rot_title = head_row(
             "ROTATE(ufo)", tr("出力補正0～100%"))
+        # =323: 上限は設定「デバイス出力補正上限」(=328)で 100/150 を切替
+        # (_apply_scale_max)。既定 100(LINEAR/TWIST と揃える)。
         self.rotate_scale_slider = RangeSlider(
             grid, from_=0, to=100, step=5,
             command=self._on_rotate_range_change)

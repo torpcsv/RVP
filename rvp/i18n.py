@@ -370,6 +370,7 @@ EN: dict[str, str] = {
     "出力補正0～100%": "Output 0–100%",
     "出力補正{0}～{1}%": "Output {0}–{1}%",
     "動作タイミング": "Timing",
+    "タイミング": "Timing",
     "反転": "Invert",
     "※ 動作タイミング(秒): ＋で遅らせる / −で早める":
         "* Timing (sec): + delays / − advances the device",
@@ -1955,4 +1956,27 @@ EN: dict[str, str] = {
     "元に戻しました": "Undone",
     "やり直しました": "Redone",
     "あと{0}段": "{0} more step(s)",
+    # =323〜=327
+    "UFOSA用に統合保存": "Merge & save for UFO SA",
+    "左右2本を1ロータ用の3列csvへ統合して別名保存します（両方停止=停止・片方=その側・両方=速い方。再生時にUFOSAへ割り当てたときと同じ動き）": "Merge left/right into a single-rotor 3-column csv and save as a new file (both stopped=stop, one moving=that side, both=the faster one; same as playing on a UFO SA)",
+    "UFOSA用に統合して保存しました": "Merged and saved for UFO SA",
+    "種別が違うため貼り付けできません（コピー元: {0} ／ 貼り付け先: {1}）": "Cannot paste: different track kind (copied: {0} / target: {1})",
+    "位置（linear/twist）": "position (linear/twist)",
+    "回転": "rotate",
+    "振動": "vibration",
+    "不明": "unknown",
+    "エクスポート": "Export",
+    "この種別の20枠をファイル（.usrptn）へ保存します（保存済みの内容。編集中の枠は「保存」してから）":
+        "Save this kind's 20 slots to a file (.usrptn) (saved contents; press Save first for the slot being edited)",
+    "ファイル（.usrptn）の内容でこの種別の20枠を置き換えます（ファイルで空の枠は空になります）":
+        "Replace this kind's 20 slots with a file (.usrptn) (slots empty in the file become empty)",
+    "ユーザーパターンのエクスポート": "Export user patterns",
+    "ユーザーパターンのインポート": "Import user patterns",
+    "ファイルへ書き込めませんでした: {0}": "Could not write the file: {0}",
+    "エクスポートしました（{0}枠）": "Exported ({0} slots)",
+    "インポートしました（{0}枠に置き換え）": "Imported (replaced with {0} slots)",
+    "ユーザーパターンのファイルではありません（JSONとして読めません）": "Not a user-pattern file (invalid JSON)",
+    "ユーザーパターンのファイルではありません": "Not a user-pattern file",
+    "種別が違います（ファイル: {0} ／ この画面: {1}）": "Different kind (file: {0} / this window: {1})",
+    "デバイス出力補正上限": "Device output limit",
 }

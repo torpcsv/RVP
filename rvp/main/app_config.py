@@ -43,6 +43,11 @@ class _RVPAppConfigMixin:
         r = rng("linear_range")
         if r:
             self.range_slider.set_values(*r)
+        # =328: 出力補正上限(100/150)。レンジ復元より前に上限を広げておく
+        sm = cfg.get("scale_max")
+        if sm in (100, 150):
+            self.scale_max_var.set(f"{sm}%")
+            self._apply_scale_max(sm)
         r = rng("rotate_range")
         if r:
             self.rotate_scale_slider.set_values(*r)
@@ -204,6 +209,8 @@ class _RVPAppConfigMixin:
             "graph_minus": bool(self.graph_view.minus),
             # =104: グラフ更新頻度(30/60fps)。
             "graph_fps": 30 if self._graph_interval_ms >= 33 else 60,
+            # =328: デバイス出力補正上限(100/150)。
+            "scale_max": self._scale_max(),
             # =119: UIフォント(""=システム標準)。適用は起動時=再起動で反映。
             "font_family": ("" if self.font_var.get() == tr("システム標準")
                             else self.font_var.get()),

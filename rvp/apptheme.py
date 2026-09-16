@@ -112,6 +112,11 @@ def build_palette(name):
         "ACCENT_HOVER": _hx(h, 0.41, 0.62),
         "ACCENT_TEXT_L": _hx(h, 0.30, 0.58),   # ライト背景上の色付き文字
         "BTN_TEXT": btn_text,
+        # =334: 補正スライダー(RangeSlider)・駆動値バー(ZoneBar)の同系色
+        "TRACK": _hx(h, 0.82, 0.30),        # スライダー範囲外・バー動作外(ペール)
+        "BAR_ACTIVE": _hx(h, 0.44, 0.32),   # バー動作可能域(暗めの同系色)
+        "BAR_LIVE": _hx(h, 0.68, 0.95),     # 接続中の駆動値・停止マーカー(明るい同系色)
+        "BAR_MARK": _hx(h, 0.94, 0.45),     # 目印線・動作中マーカー(ごく薄い同系色)
     }
 
 
