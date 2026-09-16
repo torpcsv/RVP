@@ -3,12 +3,14 @@
 # ---- internal notes / working documents (not published) ----
 *_DEV.md
 HANDOVER.md
+HANDOVER_HISTORY.md
 notes/
 
 # ---- development-only tools and test material ----
 icon_src/
 tools/
-tests/          # =307: test_*.py は tests/ 配下へ移動
+# =307: test_*.py は tests/ 配下へ移動 (gitignore は行末コメント不可なので別行)
+tests/
 test_*.py
 test_work*/
 tw_*/

@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import customtkinter as ctk
+import os
 import tkinter as tk
 from ..i18n import load_config, save_config, tr
 
-from .common import (CTkOptionMenu, MSG_ERROR, MSG_OK, MUTED, TEXT_MUTED,
+from .common import (CTkOptionMenu, MSG_ERROR, MSG_OK, MSG_WARN, MUTED, TEXT_MUTED,
     _front_window, _place_popup)
+from .fields import Tooltip
 from .review_support import SCRIPT_EDIT_STEP_TYPES
 from . import common as _clr   # =301: テーマ追従する色定数は定義元を参照
 from ._hooks import _pkg
@@ -48,6 +50,10 @@ class UserPatternDialog(ctk.CTkToplevel):
         self._key = self._keys[
             script_edit.first_free_slot(self._patterns, self.kind) - 1]
         self.model = script_edit.ScriptEditModel()
+        # =325: OS クリップボード経由の貼り付けで種別の族を突き合わせる
+        # (ユーザーパターンの点列は 0〜100 のまま。pat_center は使わない)
+        self.model.clip_family = "vib" if self.kind == "vibration" else \
+            ("rotate" if self.kind.startswith("rotate") else "pos")
 
         inner = ctk.CTkFrame(self, fg_color="transparent")
         inner.pack(fill="both", expand=True, padx=14, pady=(12, 12))
@@ -79,6 +85,26 @@ class UserPatternDialog(ctk.CTkToplevel):
                                         text_color=TEXT_MUTED)
         self.state_label.pack(side="left", anchor="n", padx=(10, 0),
                               pady=(4, 0))
+        # =327: この種別の 20 枠をファイル(.usrptn / JSON)へ書き出す・
+        # ファイルで**置き換える**(画面右上・ユーザー決定)
+        self.import_btn = ctk.CTkButton(
+            row1, text=tr("インポート"), width=90, height=26,
+            font=ctk.CTkFont(size=12),
+            fg_color=("gray75", "gray28"), hover_color=("gray70", "gray33"),
+            text_color=("gray15", "gray90"), command=self._import)
+        self.import_btn.pack(side="right", anchor="n", padx=(4, 0))
+        self.export_btn = ctk.CTkButton(
+            row1, text=tr("エクスポート"), width=90, height=26,
+            font=ctk.CTkFont(size=12),
+            fg_color=("gray75", "gray28"), hover_color=("gray70", "gray33"),
+            text_color=("gray15", "gray90"), command=self._export)
+        self.export_btn.pack(side="right", anchor="n")
+        Tooltip(self.export_btn,
+                lambda: tr("この種別の20枠をファイル（.usrptn）へ保存します"
+                           "（保存済みの内容。編集中の枠は「保存」してから）"))
+        Tooltip(self.import_btn,
+                lambda: tr("ファイル（.usrptn）の内容でこの種別の20枠を"
+                           "置き換えます（ファイルで空の枠は空になります）"))
 
         # ---- 2段目: グリッド(編集モードと同じ選択肢) ----
         row2 = ctk.CTkFrame(inner, fg_color="transparent")
@@ -117,6 +143,7 @@ class UserPatternDialog(ctk.CTkToplevel):
             on_select=lambda: None, on_menu=self._menu,
             height=self.GRAPH_H)
         self.graph.plain = True       # =206: 再生位置の線・追従バッジなし
+        self.graph.on_paste_reject = self._paste_reject   # =325
         # =231 要望5: rotate系・vibration は**階段**で描く(次の指示まで
         # 値を保つ=編集画面と同じ見え方)。ヒートマップも出さない。
         self.graph.step = self.kind in SCRIPT_EDIT_STEP_TYPES
@@ -230,6 +257,22 @@ class UserPatternDialog(ctk.CTkToplevel):
     def _on_change(self):
         self.msg_label.configure(text="", text_color=TEXT_MUTED)
 
+    def _paste_reject(self, reason: str = "range"):
+        """=325: 貼り付けが拒否されたときの表示(下段のメッセージ欄)。"""
+        from .review_edit import _clip_family_label
+        if reason == "kind":
+            msg = tr("種別が違うため貼り付けできません（コピー元: {0} ／ 貼り付け先: {1}）").format(
+                _clip_family_label(self.model.last_clip_family),
+                _clip_family_label(self.model.family()))
+        elif reason == "no_selection":
+            msg = tr("貼り付けの基準になる点を選択してください"
+                     "（選択中で最も未来の点が基準になり、その点は"
+                     "上書きされます）")
+        else:
+            msg = tr("貼り付け先に収まらないため、貼り付けできませんでした"
+                     "（0〜100または時間の範囲外になります）")
+        self.msg_label.configure(text=msg, text_color=MSG_WARN)
+
     def _menu(self, event, ctx):
         """右クリックメニュー: 点の削除だけ(グループ化・パターンは無し)。"""
         if ctx.get("at") is None or not self.model.selection:
@@ -245,6 +288,80 @@ class UserPatternDialog(ctk.CTkToplevel):
         if self.model.delete_selected():
             self.graph.redraw()
             self._on_change()
+
+    # ---- =327: エクスポート / インポート ----
+
+    def _usrptn_default(self) -> tuple[str, str]:
+        """既定の(フォルダ, ファイル名)。音声ファイル名+_種別.usrptn を
+        音声と同じフォルダへ(ユーザー決定)。音声が無ければ
+        user_patterns_種別.usrptn。"""
+        src = ""
+        spec = getattr(self.owner, "spec", None)
+        if isinstance(spec, dict):
+            src = spec.get("audio") or spec.get("video") or ""
+        if src:
+            base = os.path.splitext(os.path.basename(src))[0]
+            return os.path.dirname(os.path.abspath(src)), \
+                f"{base}_{self.kind}{self._se.USRPTN_EXT}"
+        return "", f"user_patterns_{self.kind}{self._se.USRPTN_EXT}"
+
+    def _export(self):
+        initial_dir, initial_file = self._usrptn_default()
+        path = _pkg().filedialog.asksaveasfilename(
+            parent=self, title=tr("ユーザーパターンのエクスポート"),
+            initialdir=initial_dir or None, initialfile=initial_file,
+            defaultextension=self._se.USRPTN_EXT,
+            filetypes=[("usrptn", "*" + self._se.USRPTN_EXT),
+                       (tr("すべて"), "*.*")])
+        if not path:
+            return
+        payload = self._se.dump_user_patterns(self._patterns, self.kind)
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+                f.write(payload)
+            os.replace(tmp, path)
+        except OSError as e:
+            self.msg_label.configure(
+                text=tr("ファイルへ書き込めませんでした: {0}").format(e),
+                text_color=MSG_ERROR)
+            return
+        n = sum(1 for k in self._keys if self._patterns.get(k))
+        self.msg_label.configure(
+            text=tr("エクスポートしました（{0}枠）").format(n) + ": "
+            + os.path.basename(path), text_color=MSG_OK)
+
+    def _import(self):
+        if self.model.dirty and not self._confirm_discard():
+            return
+        initial_dir, _f = self._usrptn_default()
+        path = _pkg().filedialog.askopenfilename(
+            parent=self, title=tr("ユーザーパターンのインポート"),
+            initialdir=initial_dir or None,
+            filetypes=[("usrptn", "*" + self._se.USRPTN_EXT),
+                       (tr("すべて"), "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                pats = self._se.parse_user_patterns(f.read(), self.kind)
+        except (OSError, ValueError) as e:
+            self.msg_label.configure(text=str(e), text_color=MSG_ERROR)
+            return
+        cfg = load_config()
+        self._se.replace_user_patterns(cfg, self.kind, pats)
+        save_config(cfg)
+        self._patterns = dict(pats)
+        self.model.dirty = False
+        self._load_slot(self._key)
+        self.msg_label.configure(
+            text=tr("インポートしました（{0}枠に置き換え）").format(len(pats))
+            + ": " + os.path.basename(path), text_color=MSG_OK)
+        if self.owner is not None:
+            try:
+                self.owner._on_user_patterns_saved()
+            except Exception:
+                pass
 
     # ---- 保存 ----
 

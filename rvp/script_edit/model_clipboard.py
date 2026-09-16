@@ -39,6 +39,93 @@ class _ScriptEditModelClipboardMixin:
             self.link.share_clipboard(self)
         return True
 
+    # ---- =325: OS クリップボード(JSON テキスト)との受け渡し ----
+    # ファイル・画面・RVP のプロセスをまたいで貼り付けられるように、
+    # Ctrl+C のたびに内部クリップボードと同じ中身を JSON で OS の
+    # クリップボードへも書く(実際の tk 呼び出しはグラフ側)。
+    CLIP_KEY = "rvp_clip"
+    CLIP_VERSION = 1
+
+    def family(self) -> str:
+        """種別の族(=325)。"pos"=linear/twist(位置) / "rotate"=回転 /
+        "vib"=振動。明示(clip_family)があればそれ、無ければ pat_center
+        (None=pos / 0=vib / それ以外=rotate)から決める。"""
+        if self.clip_family:
+            return self.clip_family
+        if self.pat_center is None:
+            return "pos"
+        return "vib" if int(self.pat_center) == 0 else "rotate"
+
+    def export_clip(self) -> str | None:
+        """内部クリップボードを JSON テキストにする(無ければ None)。
+        パターンは**今の形の点列**として持つ(名前も添えるが、貼り付け側は
+        点列に展開して使う=相手にそのパターンが無くても貼れる)。"""
+        import json
+        import uuid
+        if not self.has_clipboard():
+            return None
+        self.clip_token = uuid.uuid4().hex
+        if self.link is not None:
+            self.link.share_clipboard(self)
+        data = {self.CLIP_KEY: self.CLIP_VERSION,
+                "token": self.clip_token,
+                "family": self.family(),
+                "pos_max": int(self.pos_max),
+                "points": [[int(a), int(p)] for a, p in (self.clipboard or ())],
+                "patterns": [{"rel": int(round(pc["rel"])),
+                              "shape": [[int(round(t)), int(round(p))]
+                                        for t, p in pc["shape"]],
+                              "name": pc.get("name")}
+                             for pc in self.clipboard_patterns]}
+        return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+    def import_clip(self, text) -> str:
+        """OS クリップボードのテキストを取り込む(=325)。
+
+        戻り値: "same"=内部クリップボードと同じ合言葉(内部をそのまま使う・
+        パターン付き) / "ok"=取り込んだ(パターンは点列に展開・pos は
+        分解能に合わせて換算) / "kind"=族が違う(拒否) / "none"=RVP の
+        JSON ではない(内部クリップボードをそのまま使う)。
+        取り込んだときは内部クリップボードを置き換える(左右にも共有)。
+        """
+        import json
+        if not text or not isinstance(text, str) or self.CLIP_KEY not in text:
+            return "none"
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return "none"
+        if not isinstance(data, dict) or \
+                data.get(self.CLIP_KEY) != self.CLIP_VERSION:
+            return "none"
+        if data.get("token") and data.get("token") == self.clip_token \
+                and self.has_clipboard():
+            return "same"
+        fam = data.get("family")
+        if fam != self.family():
+            self.last_clip_family = fam
+            return "kind"
+        src_max = max(1, int(data.get("pos_max") or 100))
+        k = self.pos_max / src_max
+
+        def cv(p):
+            return max(0, min(self.pos_max, int(round(int(p) * k))))
+        pts = {}
+        for a, p in data.get("points") or ():
+            pts[int(a)] = cv(p)
+        for pc in data.get("patterns") or ():
+            rel = int(pc.get("rel", 0))
+            for t, p in pc.get("shape") or ():
+                pts[rel + int(t)] = cv(p)
+        if not pts:
+            return "none"
+        self.clipboard = sorted(pts.items())
+        self.clipboard_patterns = []
+        self.clip_token = data.get("token")
+        if self.link is not None:
+            self.link.share_clipboard(self)
+        return "ok"
+
     def cut_selected(self) -> bool:
         """切り取り=コピー+削除。貼り付けできなくても切り取りは成立する。"""
         if not self.copy_selected():

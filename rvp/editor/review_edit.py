@@ -22,6 +22,12 @@ from ._hooks import _pkg
 
 
 
+def _clip_family_label(fam) -> str:
+    """=325: 種別の族の表示名(位置/回転/振動)。"""
+    return {"pos": tr("位置（linear/twist）"), "rotate": tr("回転"),
+            "vib": tr("振動")}.get(fam, tr("不明"))
+
+
 class _FkChain:
     """=312: F キー長押しの数珠つなぎ(=222)の状態。打点先(左/右)ごとに1つ。"""
     __slots__ = ("held", "chain_end", "job", "release_job")
@@ -315,6 +321,13 @@ class _ItemReviewEditMixin:
             self._edit_models[1].load([])
         self._edit_pair = on
         self._edit_active = 0
+        # =324: 統合保存ボタンは左右2本(5列csv)のときだけ出す
+        btn = getattr(self, "edit_merge_btn", None)
+        if btn is not None:
+            if on and not btn.winfo_ismapped():
+                btn.pack(side="right")
+            elif not on and btn.winfo_ismapped():
+                btn.pack_forget()
         g0.corner_text = tr("左（ロータ1）") if on else ""
         g1.corner_text = tr("右（ロータ2）") if on else ""
         # =311/=312: 案内文とバッジ(F1左 F5右)を表示に合わせる
@@ -774,6 +787,18 @@ class _ItemReviewEditMixin:
         Tooltip(self.edit_sub_menu,
                 lambda: tr("編集中のトラックの下に、別のトラックを"
                            "参考として表示します（見るだけ・編集不可）"))
+        # =324: UFOTW(5列csv)の左右を 1ロータ用(UFOSA・3列csv)へ統合して
+        # 別名保存。「サブ」と同じ行の右端(ユーザー決定)。5列のときだけ表示。
+        self.edit_merge_btn = ctk.CTkButton(
+            sub_row, text=tr("UFOSA用に統合保存"), width=140, height=24,
+            font=ctk.CTkFont(size=11),
+            fg_color=("gray75", "gray28"), hover_color=("gray70", "gray33"),
+            text_color=("gray15", "gray90"),
+            command=self._edit_merge_save_as)
+        Tooltip(self.edit_merge_btn,
+                lambda: tr("左右2本を1ロータ用の3列csvへ統合して別名保存します"
+                           "（両方停止=停止・片方=その側・両方=速い方。"
+                           "再生時にUFOSAへ割り当てたときと同じ動き）"))
         # 保存結果・エラーの表示欄(モーダルにしない)
         self.edit_msg = ctk.CTkLabel(
             inner, text="", font=ctk.CTkFont(size=11), anchor="w",
@@ -1194,6 +1219,11 @@ class _ItemReviewEditMixin:
         elif reason == "edge":
             msg = tr("パターンの端のすぐ近くには点を置けないため、"
                      "貼り付けできませんでした")
+        elif reason == "kind":
+            # =325: 族(位置/回転/振動)が違うコピーは受け付けない
+            msg = tr("種別が違うため貼り付けできません（コピー元: {0} ／ 貼り付け先: {1}）").format(
+                _clip_family_label(getattr(self.edit_model, "last_clip_family", None)),
+                _clip_family_label(self.edit_model.family()))
         else:
             msg = tr("貼り付け先に収まらないため、貼り付けできませんでした"
                      "（0〜100または時間の範囲外になります）")
@@ -1423,6 +1453,51 @@ class _ItemReviewEditMixin:
         self._edit_path = path
         self._edit_new = False
         self.edit_save_btn.configure(state="normal")
+        return True
+
+    def _edit_merge_save_as(self) -> bool:
+        """=324: 左右2本(5列csv)を 1ロータ用の3列csvへ統合して別名保存。
+
+        元ファイルは変更せず、トラックへの紐づけもしない(UFOSA 用の
+        別ファイルを作るだけ)。既定名は `[元csv名]_ufosa.csv`
+        (元が未保存なら音声名+_ufosa.csv)。統合規則は再生時と同じ
+        (script_edit.merge_csv_channels → rotate_source.merge_two_channels)。
+        """
+        from .. import script_edit
+        if not self._edit_pair:
+            return False
+        initial_dir = _load_dialog_dir("review_save")
+        if not (initial_dir and os.path.isdir(initial_dir)):
+            initial_dir = ""
+        if self._edit_path:
+            base = os.path.splitext(os.path.basename(self._edit_path))[0]
+            if not initial_dir:
+                initial_dir = os.path.dirname(os.path.abspath(self._edit_path))
+        else:
+            src = self.spec.get("audio") or self.spec.get("video") or ""
+            base = os.path.splitext(os.path.basename(src))[0] if src else ""
+        initial_file = (base + "_ufosa.csv") if base else "_ufosa.csv"
+        path = _pkg().filedialog.asksaveasfilename(
+            parent=self, title=tr("UFOSA用に統合保存"),
+            initialdir=initial_dir or None, initialfile=initial_file,
+            defaultextension=".csv",
+            filetypes=[("csv", "*.csv"), (tr("すべて"), "*.*")])
+        if not path:
+            return False
+        _remember_dialog_dir(path, "review_save")
+        pts = script_edit.merge_csv_channels(self._edit_models[0].points,
+                                             self._edit_models[1].points)
+        try:
+            script_edit.write_csv(path, pts, 3)
+        except OSError as e:
+            self.edit_msg.configure(
+                text=tr("ファイルへ書き込めませんでした(他のアプリで使用中・"
+                        "読み取り専用・アクセス権なし等の可能性):\n{0}")
+                .format(e), text_color=MSG_ERROR)
+            return False
+        self.edit_msg.configure(
+            text=tr("UFOSA用に統合して保存しました") + ": "
+            + os.path.basename(path), text_color=MSG_OK)
         return True
 
     def _edit_write(self, path: str) -> bool:

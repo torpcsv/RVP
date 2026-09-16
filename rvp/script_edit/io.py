@@ -7,6 +7,7 @@ import os
 from .common import (ALL_USER_PATTERN_KEYS, FKEYS, RVP_KEY, USER_PAT_CFG_KEY,
     USER_PAT_SLOTS, user_pattern_keys)
 from .patterns import STD_PATTERNS
+from ..i18n import tr     # =327: .usrptn の読み込みエラー文
 
 
 def normalize_user_shape(points):
@@ -68,6 +69,79 @@ def save_user_pattern(cfg: dict, key: str, shape) -> dict:
     if not isinstance(up, dict):
         up = se[USER_PAT_CFG_KEY] = {}
     up[key] = [[int(t), int(p)] for t, p in shape]
+    return cfg
+
+
+USRPTN_EXT = ".usrptn"     # =327: ユーザーパターンの書き出しファイル
+USRPTN_KEY = "rvp_usrptn"
+USRPTN_VERSION = 1
+
+
+def dump_user_patterns(patterns: dict, kind: str) -> str:
+    """=327: その種別の 20 枠を JSON テキストにする(空枠は null で残す)。
+
+    `patterns` = {"L1": shape, ...}(load_user_patterns の戻り値)。
+    書式: {"rvp_usrptn": 1, "kind": "linear",
+           "patterns": {"L1": [[at,pos],...], ..., "L20": null}}
+    """
+    import json
+    out = {}
+    for key in user_pattern_keys(kind):
+        shape = patterns.get(key)
+        out[key] = [[int(t), int(p)] for t, p in shape] if shape else None
+    return json.dumps({USRPTN_KEY: USRPTN_VERSION, "kind": kind,
+                       "patterns": out},
+                      ensure_ascii=False, indent=1)
+
+
+def parse_user_patterns(text: str, kind: str) -> dict:
+    """=327: .usrptn の本文を読んで {"L1": shape, ...} を返す(空枠は含めない)。
+
+    書式違い・バージョン違い・種別違いは ValueError(メッセージは表示用)。
+    不正な枠(2点未満・幅0)は normalize_user_shape で落とす。
+    """
+    import json
+    try:
+        data = json.loads(text)
+    except ValueError:
+        raise ValueError(tr("ユーザーパターンのファイルではありません（JSONとして読めません）"))
+    if not isinstance(data, dict) or data.get(USRPTN_KEY) != USRPTN_VERSION:
+        raise ValueError(tr("ユーザーパターンのファイルではありません"))
+    fk = data.get("kind")
+    if fk != kind:
+        raise ValueError(tr("種別が違います（ファイル: {0} ／ この画面: {1}）")
+                         .format(fk, kind))
+    pats = data.get("patterns")
+    if not isinstance(pats, dict):
+        raise ValueError(tr("ユーザーパターンのファイルではありません"))
+    out = {}
+    for key in user_pattern_keys(kind):
+        raw = pats.get(key)
+        if not raw:
+            continue
+        try:
+            shape = normalize_user_shape([(int(t), int(p)) for t, p in raw])
+        except (TypeError, ValueError):
+            shape = None
+        if shape:
+            out[key] = shape
+    return out
+
+
+def replace_user_patterns(cfg: dict, kind: str, patterns: dict) -> dict:
+    """=327: その種別の 20 枠を `patterns` で**置き換える**(無い枠は消す)。"""
+    se = cfg.setdefault("script_edit", {})
+    if not isinstance(se, dict):
+        se = cfg["script_edit"] = {}
+    up = se.setdefault(USER_PAT_CFG_KEY, {})
+    if not isinstance(up, dict):
+        up = se[USER_PAT_CFG_KEY] = {}
+    for key in user_pattern_keys(kind):
+        shape = patterns.get(key)
+        if shape:
+            up[key] = [[int(t), int(p)] for t, p in shape]
+        else:
+            up.pop(key, None)
     return cfg
 
 
@@ -355,6 +429,39 @@ def dump_csv(points, cols: int = 3, other=None, ch: int = 0) -> str:
             a // CSV_AT_UNIT, vals[0][0], vals[0][1],
             vals[1][0], vals[1][1]))
     return "".join(out)
+
+
+def merge_csv_channels(left, right):
+    """5列 csv の左右2チャンネルを 3列 csv(1ロータ)用の点列へ統合する(=324)。
+
+    left / right: 各チャンネルの (at, pos)(pos 0〜200)。時刻は左右の
+    変化点の和集合(100ms 単位)。各時刻の保持値を
+    rotate_source.merge_two_channels(再生時の N=2→M=1 と同じ規則:
+    両方停止=停止、片方=その側、両方=速度率の大きい方、同速=左)で統合し、
+    **統合値が変わった時刻だけ**残す(先頭は必ず残す)。
+    """
+    from ..rotate_source import merge_two_channels
+
+    def norm(pts):
+        d = {}
+        for a, p in pts:
+            d[int(round(a / CSV_AT_UNIT)) * CSV_AT_UNIT] = \
+                max(0, min(CSV_POS_MAX, int(p)))
+        return sorted(d.items())
+    lp, rp = norm(left), norm(right)
+    ats = sorted({a for a, _p in lp} | {a for a, _p in rp})
+    out = []
+    prev = None
+    for a in ats:
+        vl = csv_val_of(csv_hold_pos(lp, a))
+        vr = csv_val_of(csv_hold_pos(rp, a))
+        cw, frac = merge_two_channels((bool(vl[0]), vl[1] / 100.0),
+                                      (bool(vr[0]), vr[1] / 100.0))
+        pos = csv_pos_of(cw, frac)
+        if pos != prev:
+            out.append((a, pos))
+            prev = pos
+    return out
 
 
 def write_csv(path: str, points, cols: int = 3, other=None,

@@ -44,6 +44,7 @@ class EditLink:
                     if src.clipboard is not None else None
                 m.clipboard_patterns = [dict(pc) for pc in
                                         src.clipboard_patterns]
+                m.clip_token = src.clip_token          # =325
 
     def undo(self):
         """最後に変更したモデルを1つ戻す。戻したモデル(無ければ None)。"""
@@ -87,6 +88,13 @@ class ScriptEditModel(_ScriptEditModelPatternsMixin, _ScriptEditModelClipboardMi
         # =185: パターンのクリップボード(点と合わせた混在コピー)。
         # 各要素 {"rel": 先頭からの相対at, "shape": ((t,pos),...), "name"}
         self.clipboard_patterns: list[dict] = []
+        # =325: OS クリップボード連携。clip_token=内部クリップボードと
+        # OS 側の JSON を突き合わせる合言葉(同じなら内部を優先=パターン
+        # 付きのまま貼れる)。clip_family=種別の族("pos"/"rotate"/"vib"。
+        # None なら pat_center から決める)。
+        self.clip_token: str | None = None
+        self.clip_family: str | None = None
+        self.last_clip_family: str | None = None   # 直近に拒否した相手の族
         # =185: 複数選択中のパターン index の集合(点の selection と併存)
         self.pattern_selection: set[int] = set()
         # =183: 端点の禁止帯の幅(端点±edge_tol へは打点・移動・貼り付け

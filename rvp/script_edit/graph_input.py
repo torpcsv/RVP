@@ -627,7 +627,8 @@ class _ScriptEditGraphInputMixin:
         # =185: 点+パターンの混在コピー(選択がそのまま入る。
         # 単独パターンの Ctrl+C=旧=180 も pattern_selection 経由で同じ)
         self._sync_pat_sel()
-        self.model.copy_selected()
+        if self.model.copy_selected():
+            self._clip_to_os()               # =325
         return "break"
 
     def _key_cut(self, _event=None):
@@ -636,6 +637,7 @@ class _ScriptEditGraphInputMixin:
         self._sync_pat_sel()
         had_pat = bool(self.model.pattern_selection)
         if self.model.cut_selected():
+            self._clip_to_os()               # =325
             if had_pat:
                 self.sel_pattern = None
             self._notify_change()
@@ -679,6 +681,13 @@ class _ScriptEditGraphInputMixin:
         # 平行移動(=180 の踏襲)/点のみ=選択中で最も at が大きい点に
         # 先頭が載り、高さは絶対値のまま(=172 の踏襲)。
         m = self.model
+        # =325: OS クリップボードに RVP の JSON があればそれを優先する
+        # (別のファイル・画面・RVP からのコピー)。種別の族が違えば拒否。
+        r = self._clip_from_os()
+        if r == "kind":
+            if callable(self.on_paste_reject):
+                self.on_paste_reject("kind")
+            return "break"
         if not m.has_clipboard():
             return "break"
         if m.clipboard_patterns:
@@ -712,6 +721,25 @@ class _ScriptEditGraphInputMixin:
             # 拒否の理由をダイアログ側へ知らせる(=171/=172/=185)
             self.on_paste_reject(result)
         return "break"
+
+    def _clip_to_os(self) -> None:
+        """=325: 内部クリップボードを JSON で OS のクリップボードへ書く。"""
+        try:
+            text = self.model.export_clip()
+            if text:
+                self.clipboard_clear()
+                self.clipboard_append(text)
+        except Exception:
+            pass
+
+    def _clip_from_os(self) -> str:
+        """=325: OS のクリップボードから RVP の JSON を取り込む。
+        戻り値は model.import_clip と同じ("none" なら内部を使う)。"""
+        try:
+            text = self.clipboard_get()
+        except Exception:
+            return "none"
+        return self.model.import_clip(text)
 
     def _key_undo(self, _event=None):
         if self.readonly:            # =227: サブ表示は見るだけ
