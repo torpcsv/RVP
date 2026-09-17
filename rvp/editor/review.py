@@ -773,6 +773,11 @@ class ItemReviewDialog(_ItemReviewPlaybackMixin, _ItemReviewEditMixin, _ItemRevi
     # =242: 0.01秒刻み・0.00〜-1.00。config("time_adjust_sec")へ保存する。
     CFG_TIME_ADJ = "time_adjust_sec"
 
+    # =337: UFOTW(左右2本)の数字キーのモード。"9"=9速(数字行=左/テンキー=右・
+    # 1〜9=9 段階)/ "4"=4速(1〜4=左・6〜9=右・-70/-40/+40/+70。テンキーも同じ)。
+    # config("edit_num_mode")へ保存し、再起動後も引き継ぐ(ユーザー決定)。
+    CFG_NUM_MODE = "edit_num_mode"
+
     TIME_ADJ_REPEAT_FIRST = 400     # 長押しの初回ディレイ(ms)
 
     TIME_ADJ_REPEAT_MS = 80         # 以降の連続増減の間隔(ms)

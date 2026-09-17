@@ -184,31 +184,7 @@ EN: dict[str, str] = {
     "この位置にはパターンを配置できません":
         "The pattern cannot be placed at this position",
     "速度:": "Speed:",
-    "F1〜F9=割り当てたパターンを再生位置へ上書き配置（長押しで数珠つなぎ） ／ 割り当て=パターンボタンを右クリック ／ 数字キー=再生位置へ打点（0〜9=pos0〜90・+=pos100） ／ 矢印キー=選択中の点・パターンを1グリッド移動（長押しで連続） ／ Q・E=10秒戻る・進む":
-        "F1–F9 = place the assigned pattern at the playback position "
-        "(overwrite; hold to chain) / Assign = right-click a pattern button / "
-        "Number keys = add a point at the playback position "
-        "(0–9 = pos 0–90, + = pos 100) / "
-        "Arrow keys = move the selection by one grid step (hold to repeat) / "
-        "Q / E = 10 s back / forward",
-    # =311/=312/=313: 左右2本(UFOTW)のときの案内
-    "F1〜F9=割り当てたパターンを割り当てた側へ上書き配置（長押しで数珠つなぎ・左右別々） ／ 割り当て=パターンボタンを右クリック ／ 数字キー=再生位置へ打点：数字行=左（ロータ1）・テンキー=右（ロータ2）（1〜9=速度-70〜+70・5=停止） ／ 矢印キー=選択中の点・パターンを1グリッド移動 ／ Q・E=10秒戻る・進む":
-        "F1–F9 = place the assigned pattern on its assigned side "
-        "(overwrite; hold to chain, left and right independently) / "
-        "Assign = right-click a pattern button / "
-        "Number keys = add a point at the playback position: "
-        "number row = L (rotor 1), numpad = R (rotor 2) "
-        "(1–9 = speed -70 to +70, 5 = stop) / "
-        "Arrow keys = move the selection by one grid step / "
-        "Q / E = 10 s back / forward",
-    # =317: 回転(a10 の rotate funscript など・1本表示)の案内
-    "F1〜F9=割り当てたパターンを再生位置へ上書き配置（長押しで数珠つなぎ） ／ 割り当て=パターンボタンを右クリック ／ 数字キー=再生位置へ打点（1〜9=速度-70,-60,-50,-40,0,+40,+50,+60,+70） ／ 矢印キー=選択中の点・パターンを1グリッド移動（長押しで連続） ／ Q・E=10秒戻る・進む":
-        "F1–F9 = place the assigned pattern at the playback position "
-        "(overwrite; hold to chain) / Assign = right-click a pattern button / "
-        "Number keys = add a point at the playback position "
-        "(1–9 = speed -70, -60, -50, -40, 0, +40, +50, +60, +70) / "
-        "Arrow keys = move the selection by one grid step (hold to repeat) / "
-        "Q / E = 10 s back / forward",
+    # 編集モードの案内文(F キー行)は =340 でまとめて後ろの方に登録
     "両方（同時）": "Both (at once)",
     "両": "B",
     # =319: マウス位置のガイド
@@ -1958,6 +1934,30 @@ EN: dict[str, str] = {
     "あと{0}段": "{0} more step(s)",
     # =323〜=327
     "UFOSA用に統合保存": "Merge & save for UFO SA",
+    # =337: 9速/4速
+    # =340: 数字キーの説明は「数字キー=再生位置へ打点」に統一
+    "F1〜F9=割り当てたパターンを再生位置へ上書き配置（長押しで数珠つなぎ） ／ 割り当て=パターンボタンを右クリック ／ 数字キー=再生位置へ打点 ／ 矢印キー=選択中の点・パターンを1グリッド移動（長押しで連続） ／ Q・E=10秒戻る・進む":
+        "F1–F9 = place the assigned pattern at the playback position "
+        "(overwrite; hold to chain) / "
+        "Assign = right-click a pattern button / "
+        "Number keys = add a point at the playback position / "
+        "Arrow keys = move the selection by one grid step (hold to repeat) / "
+        "Q / E = 10 s back / forward",
+    "F1〜F9=割り当てたパターンを割り当てた側へ上書き配置（長押しで数珠つなぎ・左右別々） ／ 割り当て=パターンボタンを右クリック ／ 数字キー=再生位置へ打点 ／ 矢印キー=選択中の点・パターンを1グリッド移動 ／ Q・E=10秒戻る・進む":
+        "F1–F9 = place the assigned pattern on its assigned side "
+        "(overwrite; hold to chain, left and right independently) / "
+        "Assign = right-click a pattern button / "
+        "Number keys = add a point at the playback position / "
+        "Arrow keys = move the selection by one grid step / "
+        "Q / E = 10 s back / forward",
+    "数字キーの打点モード": "Number-key mode",
+    "左1-9/右1-9(テンキー)": "L 1-9 / R 1-9 (numpad)",
+    "左1-4/右6-9": "L 1-4 / R 6-9",
+    "数字キーの打点モード（Ctrl+M で切り替え）\n左1-9/右1-9(テンキー): 数字行=左・テンキー=右、1〜9=速度-70〜+70（5=停止）\n左1-4/右6-9: 1〜4=左・6〜9=右、速度-70/-40/+40/+70（5・0・+は無効。テンキーも同じ）":
+        "Number-key mode (Ctrl+M toggles)\n"
+        "L 1-9 / R 1-9 (numpad): number row = L, numpad = R, 1–9 = speed -70…+70 (5 = stop)\n"
+        "L 1-4 / R 6-9: 1–4 = L, 6–9 = R, speed -70/-40/+40/+70 "
+        "(5, 0, + do nothing; numpad works the same)",
     "左右2本を1ロータ用の3列csvへ統合して別名保存します（両方停止=停止・片方=その側・両方=速い方。再生時にUFOSAへ割り当てたときと同じ動き）": "Merge left/right into a single-rotor 3-column csv and save as a new file (both stopped=stop, one moving=that side, both=the faster one; same as playing on a UFO SA)",
     "UFOSA用に統合して保存しました": "Merged and saved for UFO SA",
     "種別が違うため貼り付けできません（コピー元: {0} ／ 貼り付け先: {1}）": "Cannot paste: different track kind (copied: {0} / target: {1})",

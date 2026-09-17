@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import customtkinter as ctk
+import sys
 import tkinter as tk
 import warnings
 from .. import appfont
@@ -18,6 +19,11 @@ from . import common as _clr   # =301: テーマ追従する色定数は定義�
 # _on_pos_key に渡る「数字×10」(0=0, 1=10 … 9=90, +=100)で引く。
 ROTATE_KEY_SPEED = {10: -70, 20: -60, 30: -50, 40: -40, 50: 0,
                     60: 40, 70: 50, 80: 60, 90: 70}
+
+# =337: 4速モード(UFOTW 左右2本のときだけ)。数字キー(pos)→(側, 9速での pos)。
+# 1〜4=左・6〜9=右で速度 -70/-40/+40/+70。5・0・+ は無効。テンキーも同じ扱い。
+ROTATE_KEY4 = {10: (0, 10), 20: (0, 40), 30: (0, 60), 40: (0, 90),
+               60: (1, 10), 70: (1, 40), 80: (1, 60), 90: (1, 90)}
 
 class _ItemReviewPatternsMixin:
     """ItemReviewDialog の mixin(=301 分割)。パターンパレット・Fキー割り当て/配置・時間補正・右クリックメニュー"""
@@ -290,6 +296,122 @@ class _ItemReviewPatternsMixin:
             c.held = None
             c.chain_end = None
         self._chain_stop_job(side)
+        # =336: 数字キーの押しっぱなし状態も忘れる(閉じる・切り替え時。
+        # side 付きは F キーの数珠つなぎだけを止めるので数字キーは触らない)
+        if side is None:
+            for h in getattr(self, "_num_hold", ()):
+                h.clear(self)
+
+    # ---- =336: 数字キーの押下/解放 ----
+    # 押している間だけ回す(震わせる)書き方。押下は従来どおり 1 点、離したら
+    # その側の停止値(ROTATE=速度 0=5 キー相当 / VIBRATION=pos 0)を再生位置へ
+    # 1 点打つ。ユーザー決定(=336):
+    #  ・対象は ROTATE と VIBRATION だけ(LINEAR/TWIST は押下のみ)
+    #  ・解放の打点は「離した時刻(吸着後)>押した時刻」のときだけ(停止中の
+    #    単押しは従来どおり 1 点のまま)
+    #  ・OS の自動リピートは無視(押しっぱなし=開始 1 点+停止 1 点)
+    #  ・停止値のキー自身(ROTATE の 5・0・+ / VIBRATION の 0)は解放で何もしない
+    #  ・同じ側で複数キーを重ねたときは、その側の**最後の 1 個**を離したときだけ
+    #  ・UNDO は従来どおり 1 点=1 ステップ
+    # Windows は自動リピート中に KeyRelease を送らないので即時に打つ。X11 は
+    # Release/Press の連打になるので FKEY_RELEASE_MS 待って確定する。
+    NUM_RELEASE_IMMEDIATE = (sys.platform == "win32")
+
+    def _num_hold_pos_key(self, pos: int):
+        """解放で停止値を打つ対象のキーか。対象なら停止値のキー(pos)を返す。"""
+        from .. import script_edit
+        mode = self._pat_mode()
+        pos = int(pos)
+        if mode == script_edit.PAT_MODE_ROTATE:
+            spd = ROTATE_KEY_SPEED.get(pos)
+            return 50 if spd not in (None, 0) else None
+        if mode == script_edit.PAT_MODE_VIB:
+            return 0 if pos > 0 else None
+        return None
+
+    def _num_key_map(self, pos: int, side):
+        """=337: 4速モードなら (側, 9速での pos) へ読み替える。無効キーは None。
+        9速モード(または 1本表示)ではそのまま。"""
+        if self._edit_pair and getattr(self, "_num_mode", "9") == "4":
+            return ROTATE_KEY4.get(int(pos))
+        return (side, int(pos))
+
+    def _on_pos_key_press(self, pos: int, side=None):
+        """KeyPress。従来の _on_pos_key に加えて押しっぱなしの状態を持つ。"""
+        if not self._edit_built:
+            return None
+        mp = self._num_key_map(pos, side)
+        if mp is None:
+            return "break"              # 4速モードの 5・0・+
+        side, pos = mp
+        sd = self._key_side(side)
+        h = self._num_hold[sd]
+        job = h.pending.pop(int(pos), None)
+        if job is not None:
+            # 自動リピートの Release が来ていた=押しっぱなしの継続
+            try:
+                self.after_cancel(job)
+            except Exception:
+                pass
+        if int(pos) in h.keys:
+            return "break"              # OS の自動リピートは無視
+        press_at = self._pos_key_at(sd)
+        r = self._on_pos_key(pos, side=side)
+        if r == "break" and self._num_hold_pos_key(pos) is not None:
+            h.keys[int(pos)] = press_at
+        return r
+
+    def _on_pos_key_release(self, pos: int, side=None):
+        """KeyRelease。押しっぱなしだったキーなら停止値の打点へ。"""
+        if not self._edit_built:
+            return None
+        mp = self._num_key_map(pos, side)
+        if mp is None:
+            return "break"
+        side, pos = mp
+        sd = self._key_side(side)
+        h = self._num_hold[sd]
+        if int(pos) not in h.keys:
+            return "break"
+        if self.NUM_RELEASE_IMMEDIATE:
+            self._num_release_confirm(sd, int(pos))
+            return "break"
+        job = h.pending.pop(int(pos), None)
+        if job is not None:
+            try:
+                self.after_cancel(job)
+            except Exception:
+                pass
+        h.pending[int(pos)] = self.after(
+            self.FKEY_RELEASE_MS,
+            lambda s_=sd, p_=int(pos): self._num_release_confirm(s_, p_))
+        return "break"
+
+    def _num_release_confirm(self, sd: int, pos: int):
+        """解放の確定。その側の最後のキーなら停止値を打つ。"""
+        h = self._num_hold[sd]
+        h.pending.pop(pos, None)
+        press_at = h.keys.pop(pos, None)
+        if press_at is None:
+            return None
+        if h.keys:
+            return None                 # 同じ側に別のキーが残っている
+        if not self.edit_mode or not self._edit_built or \
+                self.edit_model is None:
+            return None
+        stop = self._num_hold_pos_key(pos)
+        if stop is None:
+            return None
+        if self._pos_key_at(sd) <= press_at:
+            return None                 # 停止中の単押し=従来どおり 1 点
+        return self._on_pos_key(stop, side=sd)
+
+    def _pos_key_at(self, sd: int) -> int:
+        """数字キーの打点時刻(再生位置+時間補正を at グリッドへ吸着)。"""
+        from .. import script_edit
+        g = self._edit_graphs[sd]
+        return int(script_edit.snap(
+            max(0.0, self._now_ms() + self._time_adj_ms()), g.grid_at))
 
     def _key_target_is_entry(self) -> bool:
         """フォーカスが文字入力欄にあるか(数字キーは入力を優先する)。"""
@@ -314,8 +436,7 @@ class _ItemReviewPatternsMixin:
         if self._key_target_is_entry():
             return None                 # at/pos 欄へ数字を入れている最中
         g, m = self._key_target(side)
-        at = script_edit.snap(max(0.0, self._now_ms() + self._time_adj_ms()),
-                              g.grid_at)
+        at = self._pos_key_at(self._key_side(side))
         if self._pat_mode() == script_edit.PAT_MODE_ROTATE:
             # =317: 回転(csv・rotate funscript)は **1〜9 = 速度 -70,-60,-50,
             # -40,0,+40,+50,+60,+70**、0 と + は何もしない(ユーザー決定:

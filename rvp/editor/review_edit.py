@@ -38,6 +38,28 @@ class _FkChain:
         self.job = None           # 終端監視の after id
         self.release_job = None   # KeyRelease の確定待ち(自動リピート)
 
+class _NumHold:
+    """=336: 数字キー押しっぱなしの状態。打点先(左/右)ごとに1つ。
+
+    keys    … 押されている数字キー(_on_pos_key の pos)→ 押した時刻(at, ms)
+    pending … KeyRelease の確定待ち(X11 の自動リピート対策)pos → after id
+    """
+    __slots__ = ("keys", "pending")
+
+    def __init__(self):
+        self.keys = {}
+        self.pending = {}
+
+    def clear(self, widget=None):
+        if widget is not None:
+            for job in self.pending.values():
+                try:
+                    widget.after_cancel(job)
+                except Exception:
+                    pass
+        self.keys.clear()
+        self.pending.clear()
+
 class _ItemReviewEditMixin:
     """ItemReviewDialog の mixin(=301 分割)。編集モード(構築・対象トラック・種別・サブ表示・数値欄・保存・未保存確認)"""
 
@@ -330,13 +352,20 @@ class _ItemReviewEditMixin:
                 btn.pack_forget()
         g0.corner_text = tr("左（ロータ1）") if on else ""
         g1.corner_text = tr("右（ロータ2）") if on else ""
+        # =337/=338: 9速/4速 の切り替え(ラベル+ボタン)も左右2本のときだけ出す。
+        # 「サブ」コンボの右に間を空けて並べる(統合保存ボタンは右端のまま)
+        seg = getattr(self, "edit_num_mode_seg", None)
+        lbl = getattr(self, "edit_num_mode_label", None)
+        if seg is not None and lbl is not None:
+            if on and not seg.winfo_ismapped():
+                lbl.pack(side="left", padx=(16, 0), after=self.edit_sub_menu)
+                seg.pack(side="left", padx=(4, 0), after=lbl)
+            elif not on and seg.winfo_ismapped():
+                seg.pack_forget()
+                lbl.pack_forget()
         # =311/=312: 案内文とバッジ(F1左 F5右)を表示に合わせる
+        self._refresh_key_hint(on)
         if getattr(self, "edit_fkey_hint", None) is not None:
-            from .. import script_edit
-            rot = getattr(self, "_edit_type", None) is not None and \
-                self._pat_mode() == script_edit.PAT_MODE_ROTATE
-            self.edit_fkey_hint.configure(
-                text=self._fkey_hint_text(on, rot))
             self._refresh_fkey_badges()
         g0.set_active(True, peer_mode=on)
         g1.set_active(False, peer_mode=on)
@@ -702,15 +731,28 @@ class _ItemReviewEditMixin:
         # (KP_1 にならない)ので、束縛名では左右を分けられない(v1.2.0 で
         # テンキーが左に打たれた不具合)。keysym と keycode(VK_NUMPAD0〜9=
         # 96〜105・VK_ADD=107)から _pos_key_side で判定する。
+        # =336: **キーを離したら停止値を打つ**(ROTATE=速度 0・VIBRATION=pos 0)。
+        # 押している間だけ回す/震わせる書き方のため、KeyPress/KeyRelease で
+        # 受け、状態は打点先(左/右)ごとに持つ(_NumHold)。自動リピートは無視。
+        self._num_hold = [_NumHold(), _NumHold()]
         for d in range(10):
             for seq in ("<KeyPress-" + str(d) + ">",
                         "<KeyPress-KP_" + str(d) + ">"):
                 self.bind(seq, lambda e, v=d * 10:
-                          self._on_pos_key(v, side=self._pos_key_side(e)),
+                          self._on_pos_key_press(v, self._pos_key_side(e)),
+                          add="+")
+            for seq in ("<KeyRelease-" + str(d) + ">",
+                        "<KeyRelease-KP_" + str(d) + ">"):
+                self.bind(seq, lambda e, v=d * 10:
+                          self._on_pos_key_release(v, self._pos_key_side(e)),
                           add="+")
         for seq in ("<KeyPress-plus>", "<KeyPress-KP_Add>"):
             self.bind(seq, lambda e:
-                      self._on_pos_key(100, side=self._pos_key_side(e)),
+                      self._on_pos_key_press(100, self._pos_key_side(e)),
+                      add="+")
+        for seq in ("<KeyRelease-plus>", "<KeyRelease-KP_Add>"):
+            self.bind(seq, lambda e:
+                      self._on_pos_key_release(100, self._pos_key_side(e)),
                       add="+")
 
         # ---- グラフ ----
@@ -799,32 +841,111 @@ class _ItemReviewEditMixin:
                 lambda: tr("左右2本を1ロータ用の3列csvへ統合して別名保存します"
                            "（両方停止=停止・片方=その側・両方=速い方。"
                            "再生時にUFOSAへ割り当てたときと同じ動き）"))
+        # =337/=338: 9速/4速 の切り替え。「サブ」コンボの右に少し間を空けて
+        # ラベル「数字キーの打点モード」+セグメントボタン(=338 FB: 「サブ」の
+        # 下ではなく右隣り)。5列csv(左右2本)のときだけ出す。Ctrl+M でも切り替わる。
+        self._num_mode = self.load_num_mode()
+        self.edit_num_mode_label = ctk.CTkLabel(
+            sub_row, text=tr("数字キーの打点モード"), font=ctk.CTkFont(size=11),
+            text_color=TEXT_MUTED)
+        # =339: 表記は「左1-9/右1-9(テンキー)」「左1-4/右6-9」(ユーザー決定。
+        # 内部の呼び名は 9速/4速 のまま)
+        self.edit_num_mode_seg = ctk.CTkSegmentedButton(
+            sub_row, values=[self._num_mode_label("9"),
+                             self._num_mode_label("4")],
+            height=24, font=ctk.CTkFont(size=11),
+            command=self._on_num_mode_seg)
+        self.edit_num_mode_seg.set(self._num_mode_label(self._num_mode))
+        # CTkSegmentedButton は bind 不可なので中のボタンへ付ける
+        for _b in getattr(self.edit_num_mode_seg, "_buttons_dict", {}).values():
+            Tooltip(_b,
+                lambda: tr("数字キーの打点モード（Ctrl+M で切り替え）\n"
+                           "左1-9/右1-9(テンキー): 数字行=左・テンキー=右、1〜9=速度-70〜+70（5=停止）\n"
+                           "左1-4/右6-9: 1〜4=左・6〜9=右、速度-70/-40/+40/+70"
+                           "（5・0・+は無効。テンキーも同じ）"))
         # 保存結果・エラーの表示欄(モーダルにしない)
         self.edit_msg = ctk.CTkLabel(
             inner, text="", font=ctk.CTkFont(size=11), anchor="w",
             justify="left", wraplength=self.EDIT_WIN_W - 80)
         self.edit_msg.pack(fill="x", pady=(2, 0))
+        for seq in ("<Control-m>", "<Control-M>"):
+            self.bind(seq, lambda _e: self._toggle_num_mode(), add="+")
+
+    def _refresh_key_hint(self, pair=None):
+        """=337: 案内文を表示(左右2本か・回転か・9速/4速)に合わせる。"""
+        if getattr(self, "edit_fkey_hint", None) is None:
+            return
+        from .. import script_edit
+        if pair is None:
+            pair = self._edit_pair
+        rot = getattr(self, "_edit_type", None) is not None and \
+            self._pat_mode() == script_edit.PAT_MODE_ROTATE
+        self.edit_fkey_hint.configure(
+            text=self._fkey_hint_text(pair, rot, self._num_mode == "4"))
+
+    # ---- =337: 9速/4速 ----
+    NUM_MODES = ("9", "4")
+
+    @classmethod
+    def load_num_mode(cls, cfg=None) -> str:
+        """記憶した数字キーのモード("9"/"4")。無い/不正なら "9"。"""
+        try:
+            cfg = load_config() if cfg is None else cfg
+            v = str(cfg.get(cls.CFG_NUM_MODE, "9"))
+        except Exception:
+            v = "9"
+        return v if v in cls.NUM_MODES else "9"
 
     @staticmethod
-    def _fkey_hint_text(pair: bool, rotate: bool = False) -> str:
-        """=213 のショートカット案内。=311/=312: 左右2本のときは打点先の
-        説明に差し替える。=313: Q/E の 10 秒移動を追記。=317: 回転
-        (csv・rotate funscript)は数字キーの対応表が違う。"""
+    def _num_mode_label(mode: str) -> str:
+        """=339: ボタンの表記(内部の呼び名 9速/4速 とは別)。"""
+        return tr("左1-4/右6-9") if mode == "4" else tr("左1-9/右1-9(テンキー)")
+
+    def _set_num_mode(self, mode: str, save: bool = True):
+        """モードを切り替える。押しっぱなし状態は忘れ、案内文・ボタン・config を更新。"""
+        mode = "4" if str(mode) == "4" else "9"
+        self._num_mode = mode
+        for h in getattr(self, "_num_hold", ()):
+            h.clear(self)
+        seg = getattr(self, "edit_num_mode_seg", None)
+        if seg is not None and seg.get() != self._num_mode_label(mode):
+            seg.set(self._num_mode_label(mode))
+        self._refresh_key_hint()
+        if save:
+            try:
+                cfg = load_config()
+                if cfg.get(self.CFG_NUM_MODE) != mode:
+                    cfg[self.CFG_NUM_MODE] = mode
+                    save_config(cfg)
+            except Exception:
+                pass
+
+    def _on_num_mode_seg(self, label: str):
+        self._set_num_mode("4" if label == self._num_mode_label("4") else "9")
+
+    def _toggle_num_mode(self):
+        """Ctrl+M。左右2本(UFOTW)のときだけ効く。"""
+        if not self.edit_mode or not self._edit_built or not self._edit_pair:
+            return None
+        self._set_num_mode("4" if self._num_mode == "9" else "9")
+        return "break"
+
+    @staticmethod
+    def _fkey_hint_text(pair: bool, rotate: bool = False,
+                        num4: bool = False) -> str:
+        """=213 のショートカット案内。=311/=312: 左右2本のときは F キーの打点先の
+        説明に差し替える。=313: Q/E の 10 秒移動を追記。=340: 数字キーの説明は
+        「数字キー=再生位置へ打点」に統一(回転/振動・9速/4速 で変えない。ユーザー
+        決定: シンプルに・共通に)。rotate/num4 は互換のため残すが使わない。"""
         if pair:
             return tr("F1〜F9=割り当てたパターンを割り当てた側へ上書き配置（長押しで数珠つなぎ・左右別々） "
                       "／ 割り当て=パターンボタンを右クリック "
-                      "／ 数字キー=再生位置へ打点：数字行=左（ロータ1）・テンキー=右（ロータ2）（1〜9=速度-70〜+70・5=停止） "
+                      "／ 数字キー=再生位置へ打点 "
                       "／ 矢印キー=選択中の点・パターンを1グリッド移動 "
-                      "／ Q・E=10秒戻る・進む")
-        if rotate:
-            return tr("F1〜F9=割り当てたパターンを再生位置へ上書き配置（長押しで数珠つなぎ） "
-                      "／ 割り当て=パターンボタンを右クリック "
-                      "／ 数字キー=再生位置へ打点（1〜9=速度-70,-60,-50,-40,0,+40,+50,+60,+70） "
-                      "／ 矢印キー=選択中の点・パターンを1グリッド移動（長押しで連続） "
                       "／ Q・E=10秒戻る・進む")
         return tr("F1〜F9=割り当てたパターンを再生位置へ上書き配置（長押しで数珠つなぎ） "
                   "／ 割り当て=パターンボタンを右クリック "
-                  "／ 数字キー=再生位置へ打点（0〜9=pos0〜90・+=pos100） "
+                  "／ 数字キー=再生位置へ打点 "
                   "／ 矢印キー=選択中の点・パターンを1グリッド移動（長押しで連続） "
                   "／ Q・E=10秒戻る・進む")
 
