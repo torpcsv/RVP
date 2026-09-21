@@ -10,6 +10,7 @@ from .common import (CHANNEL_IDS, DEFAULT_EVENT, INFINITE_CHOICE,
     _remember_dialog_dir)
 from .dialogs import ImportDialog, OpsDialog, VarsDialog
 from .paths import _map_item_paths
+from .. import scenario_map as _smap
 from ._hooks import _pkg
 
 
@@ -697,6 +698,34 @@ class _ScenarioEditorEventsMixin:
         self._load_panel(new)
         self._redraw_canvas()
 
+    # =344: 追加/コピーは「選択中イベントの右」へ置く(ユーザー決定)。
+    NEW_EVENT_CELLS = 4          # 右へ何格子ずらすか(26px×4=104px)
+
+    def _new_event_pos(self):
+        """=344: 新しいイベントを置く座標(選択中イベントの右)。
+
+        横幅の広いシナリオでは、pos の無いイベントが自動配置の左端に出て
+        しまい、毎回ドラッグで右へ運ぶ必要があった(ユーザーFB)。
+        選択中イベントの右へ `NEW_EVENT_CELLS` 格子ずらした位置を基点に、
+        埋まっていれば `nearest_free_cell()` で最寄りの空き格子へ寄せる。
+
+        **自動配置モードでも pos は記録する**(見た目は自動配置のままだが、
+        手動へ切り替えたときにこの位置が活きる。ユーザー決定)。
+        選択が無い/座標が取れない/空きが無いときは None(従来どおり)。
+        """
+        sel = self.selected
+        if not sel or sel not in self.data.get("events", {}):
+            return None
+        try:
+            positions = _smap.manual_positions(self.data)
+        except Exception:
+            return None
+        if sel not in positions:
+            return None
+        sx, sy = positions[sel]
+        return _smap.nearest_free_cell(
+            sx + _smap.GRID * self.NEW_EVENT_CELLS, sy, positions)
+
     def _add_event(self):
         # 先に現在のパネルを反映してから追加する
         # (後で反映すると、末尾イベントへのnext設定が旧値で上書きされるため)
@@ -710,7 +739,11 @@ class _ScenarioEditorEventsMixin:
         while f"event{n}" in self.data["events"]:
             n += 1
         new_id = f"event{n}"
+        new_pos = self._new_event_pos()          # =344(追加する前に決める)
         self.data["events"][new_id] = json.loads(json.dumps(DEFAULT_EVENT))
+        if new_pos is not None:
+            self.data["events"][new_id]["pos"] = [int(new_pos[0]),
+                                                  int(new_pos[1])]
         # チェーン末尾が未接続(next無し)のときだけつなぐ(分岐設定は壊さない)
         chain, _ = self._chain_order()
         if chain:
@@ -765,6 +798,9 @@ class _ScenarioEditorEventsMixin:
         dup = json.loads(json.dumps(self.data["events"][ev_id]))
         dup["next"] = None   # 終了時の遷移先はコピーしない(ループ防止)
         dup.pop("pos", None)  # =299: 手動配置の座標は複製しない(重なるため)
+        new_pos = self._new_event_pos()          # =344: コピー元の右へ置く
+        if new_pos is not None:
+            dup["pos"] = [int(new_pos[0]), int(new_pos[1])]
         self.data["events"][new_id] = dup
         # チェーン末尾が未接続(next無し)のときだけつなぐ(分岐設定は壊さない)
         chain, _ = self._chain_order()

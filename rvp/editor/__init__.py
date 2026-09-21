@@ -90,7 +90,7 @@ from .fields import (Tooltip, VarRefField, CondListEditor, _range_disp,
     _raw_range, _validate_range_fields, _range_dict)  # noqa: F401
 from .items import (TrackRowsMixin, ItemRow, BgmItemRow)  # noqa: F401
 from .channel import (ChannelSection)  # noqa: F401
-from .dialogs import (OpsDialog, DetailDialog, BackgroundDialog, VarsDialog,
+from .dialogs import (OpsDialog, DetailDialog, PlayOptionsDialog, VarsDialog,
     ChannelCopyDialog, ImportDialog)  # noqa: F401
 from .help import (_help_blocks, _help_sections, _license_blocks, HelpDialog,
     third_party_licenses_path, third_party_licenses_text, LicenseDialog)  # noqa: F401

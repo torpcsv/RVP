@@ -44,6 +44,10 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
         self._paused = False
         self._jump = None            # "next" / "back" / None
         self._visited_events: set[str] = set()
+        # =343: 実際に通ったイベント間の (from, to)。再生開始でリセット。
+        # ネタバレ防止の「未通過の矢印を隠す」が参照する(event_trail は
+        # ◀◀で縮むので、一度通った矢印が消えないよう別に積む)。
+        self._visited_edges: set[tuple] = set()
         # =77: このイベント実行中に実行したステート(transitionのvisited:
         # exclude用)。イベントに入るたびリセット(ユーザー決定)。
         self._visited_states: set[str] = set()
@@ -186,6 +190,7 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
             # どちらも再生開始でリセットし、停止/終了後も保持する
             # (前回の軌跡を見直せるように。シナリオ切替でクリア)。
             "event_trail": (),
+            "visited_edges": (),
             "state_trail": (),
             # ③変数・イベントログ用の追記式ログ。("event"|"state", id) の列。
             # trail と違い◀◀で縮まない=通過した順の完全な記録。
@@ -250,6 +255,7 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
             # このシナリオ再生中に実行したイベント(next分岐のvisited: exclude用)。
             # 再生開始でリセット。◀◀での再実行もカウントされる。
             self._visited_events = set()
+            self._visited_edges = set()          # =343
             # 音声なしノードの連続通過カウンタも再生開始でリセット
             self._silent_streak = 0
             # 履歴トレイル(イベント状態ビュー用)とイベントログも再生開始でリセット
@@ -258,12 +264,20 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
             self.state["run_log"] = ()
             # =124: 図の減光(実行済み)/明度アップ(すごろく通過)用
             self.state["visited_events"] = ()
+            self.state["visited_edges"] = ()     # =343
             self.state["advance_glow"] = ()
             self.graph_segments = []       # =69 グラフも再生開始でクリア
             event_id = scenario.start
+            prev_id = None
             while event_id and not self._stop_requested:
                 event = scenario.events[event_id]
                 self._visited_events.add(event_id)
+                # =343: 直前のイベントからの遷移を「通った矢印」として積む
+                # (◀◀で戻った向きも1本の遷移として数える)
+                if prev_id is not None and prev_id != event_id:
+                    self._visited_edges.add((prev_id, event_id))
+                    self.state["visited_edges"] = tuple(self._visited_edges)
+                prev_id = event_id
                 # =124: 実行済みノードの減光表示用に図側へ公開する
                 self.state["visited_events"] = tuple(self._visited_events)
                 # ◀◀履歴スタック+現在イベント=辿った経路(◀◀で戻ると縮む)
@@ -501,6 +515,7 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
         s["video_file"] = ""
         s["video_channel"] = ""
         s["event_trail"] = ()
+        s["visited_edges"] = ()       # =343
         s["state_trail"] = ()
         s["run_log"] = ()
 

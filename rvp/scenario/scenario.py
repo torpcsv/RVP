@@ -4,7 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .load import _ScenarioLoadMixin
-from .model import BackgroundSpec, ScenarioEvent, VarDecl  # noqa: F401
+from .model import (BackgroundSpec, EventMapSpec, ScenarioEvent,  # noqa: F401
+                    VarDecl)
 
 
 @dataclass
@@ -33,3 +34,6 @@ class Scenario(_ScenarioLoadMixin):
     bgm_enabled: bool = False
     # =262: 背景イラスト(トップレベル "background")。省略=None=なし。
     background: "BackgroundSpec | None" = None
+    # =343: イベント遷移図のネタバレ防止(トップレベル "event_map")。
+    # 省略=None=従来どおり全部見える。再生タブの図だけに効く。
+    event_map: "EventMapSpec | None" = None

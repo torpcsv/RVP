@@ -1844,6 +1844,31 @@ EN: dict[str, str] = {
         "A track range is invalid, so it follows the item range instead.",
     # ---- =262: 背景イラスト ----
     "背景": "Backdrop",
+    # ---- =345: 候補が多いメニューの絞り込み ----
+    "絞り込み": "Filter",
+    "候補がありません": "No matches",
+    # ---- =343: 再生オプション(背景イラスト+イベント遷移図) ----
+    # ※「イベント遷移図」は既出(=300 の別ウィンドウ題名)なのでここでは足さない
+    "再生オプション": "Playback options",
+    "再生タブの図をどこまで見せるかの指定です。"
+    "「再生中に図はちょっと見たいが、この先のネタバレや"
+    "まだ選んでいない選択肢は見せたくない」ときに使います"
+    "(編集画面の図には効きません)。":
+        "Controls how much of the map the Play tab reveals. Use it "
+        "when you want the map visible during playback without "
+        "spoiling what lies ahead or which choices remain "
+        "(the editor map is never affected).",
+    "未到達のイベント名を伏せる(到達済みと現在地は表示)":
+        "Hide names of events not reached yet "
+        "(visited events and the current one stay visible)",
+    "未通過の矢印を隠す(通った矢印だけ描く)":
+        "Hide arrows not taken yet (draw only the ones travelled)",
+    "event_map はオブジェクトで指定してください":
+        "event_map must be an object",
+    "event_map: {0} は true/false で指定してください":
+        "event_map: {0} must be true or false",
+    "event_map: 知らないキーがあります: {0}":
+        "event_map: unknown key(s): {0}",
     "透け具合": "Opacity",
     "背景イラスト": "Background image",
     "再生画面全体の背景に表示するイラストです(png/jpg等)。"

@@ -370,29 +370,38 @@ class DetailDialog(ctk.CTkToplevel):
         self._close()
 
 
-class BackgroundDialog(ctk.CTkToplevel):
-    """背景イラスト(=262)の設定ダイアログ(モーダル)。
+class PlayOptionsDialog(ctk.CTkToplevel):
+    """再生オプション(=262 背景イラスト / =343 イベント遷移図)の設定ダイアログ。
 
-    再生画面全体の背景に敷くイラスト(トップレベル "background")を
-    ファイル選択・クリア・暗さ(%)で編集する。「保存」=メモリ(self.data)への
-    反映のみで、JSONファイルへは編集画面の「保存」で書き出す(紹介文と
-    同じ作法)。キャンセル/✕は破棄。
+    =343(ユーザー決定): 旧「背景」ダイアログの意味を広げ、**再生中の見え方を
+    シナリオ作成者が決める設定**をまとめた。
+
+    - **背景イラスト**(トップレベル "background"): ファイル選択・クリア・暗さ(%)。
+      表示ON/OFFと透け具合は視聴側の設定が最終決定する(素材の指定だけ)。
+    - **イベント遷移図**(トップレベル "event_map"): 再生タブの図のネタバレ防止。
+      「未到達のイベント名を伏せる」「未通過の矢印を隠す」の2つ。こちらは
+      **作成者の指定がそのまま効く**(視聴側では変えられない)。
+
+    「保存」=メモリ(self.data)への反映のみで、JSONファイルへは編集画面の
+    「保存」で書き出す(紹介文と同じ作法)。キャンセル/✕は破棄。
 
     self.result:
-      None                        = キャンセル(変更なし)
-      {"background": None}        = クリア(キーごと削除)
-      {"background": {"file": p, "dim": n}} = 設定
+      None = キャンセル(変更なし)、それ以外は
+      {"background": None | {"file": p, "dim": n},
+       "event_map":  None | {"mask_names": bool, "hide_edges": bool}}
+      (None はそのキーごと削除)
     """
 
     FILETYPES_EXT = "*.png *.jpg *.jpeg *.webp *.bmp *.gif"
+    W, H = 600, 380
 
-    def __init__(self, master, raw, base_dir: str):
+    def __init__(self, master, raw, base_dir: str, map_raw=None):
         super().__init__(master)
-        self.title(tr("背景イラスト"))
+        self.title(tr("再生オプション"))
         self.result = None
         self.base_dir = base_dir
-        self.geometry("560x240")
-        _place_popup(self, master, 560, 240)
+        self.geometry(f"{self.W}x{self.H}")
+        _place_popup(self, master, self.W, self.H)
         self.transient(master)
 
         # 現在値を分解(文字列/辞書の2書式。dim省略=40)
@@ -407,13 +416,17 @@ class BackgroundDialog(ctk.CTkToplevel):
             if isinstance(d, (int, float)) and not isinstance(d, bool):
                 dim = int(round(d))
 
+        ctk.CTkLabel(
+            self, text=tr("背景イラスト"),
+            font=ctk.CTkFont(size=13, weight="bold"), anchor="w",
+        ).pack(fill="x", padx=14, pady=(12, 0))
         hint = ctk.CTkLabel(
             self, text=tr("再生画面全体の背景に表示するイラストです(png/jpg等)。"
                           "表示のON/OFFは視聴する人がメイン画面の設定で"
                           "切り替えられます。"),
             font=ctk.CTkFont(size=12), text_color=TEXT_MUTED,
-            wraplength=520, justify="left", anchor="w")
-        hint.pack(fill="x", padx=14, pady=(12, 8))
+            wraplength=560, justify="left", anchor="w")
+        hint.pack(fill="x", padx=14, pady=(2, 8))
 
         row = ctk.CTkFrame(self, fg_color="transparent")
         row.pack(fill="x", padx=14)
@@ -445,6 +458,38 @@ class BackgroundDialog(ctk.CTkToplevel):
             font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
             wraplength=360, justify="left", anchor="w",
         ).pack(side="left", fill="x", expand=True)
+
+        # ---- =343: イベント遷移図(ネタバレ防止) ----
+        ctk.CTkFrame(self, height=1, fg_color=MUTED).pack(
+            fill="x", padx=14, pady=(14, 0))
+        ctk.CTkLabel(
+            self, text=tr("イベント遷移図"),
+            font=ctk.CTkFont(size=13, weight="bold"), anchor="w",
+        ).pack(fill="x", padx=14, pady=(10, 0))
+        ctk.CTkLabel(
+            self, text=tr("再生タブの図をどこまで見せるかの指定です。"
+                          "「再生中に図はちょっと見たいが、この先のネタバレや"
+                          "まだ選んでいない選択肢は見せたくない」ときに使います"
+                          "(編集画面の図には効きません)。"),
+            font=ctk.CTkFont(size=12), text_color=TEXT_MUTED,
+            wraplength=560, justify="left", anchor="w",
+        ).pack(fill="x", padx=14, pady=(2, 6))
+        self.mask_names_var = tk.BooleanVar(
+            value=bool(isinstance(map_raw, dict)
+                       and map_raw.get("mask_names")))
+        self.hide_edges_var = tk.BooleanVar(
+            value=bool(isinstance(map_raw, dict)
+                       and map_raw.get("hide_edges")))
+        ctk.CTkCheckBox(
+            self, text=tr("未到達のイベント名を伏せる(到達済みと現在地は表示)"),
+            variable=self.mask_names_var, font=ctk.CTkFont(size=12),
+            fg_color=_clr.ACCENT, hover_color=_clr.ACCENT_HOVER,
+        ).pack(anchor="w", padx=18, pady=2)
+        ctk.CTkCheckBox(
+            self, text=tr("未通過の矢印を隠す(通った矢印だけ描く)"),
+            variable=self.hide_edges_var, font=ctk.CTkFont(size=12),
+            fg_color=_clr.ACCENT, hover_color=_clr.ACCENT_HOVER,
+        ).pack(anchor="w", padx=18, pady=2)
 
         self.err_label = ctk.CTkLabel(
             self, text="", font=ctk.CTkFont(size=12, weight="bold"),
@@ -503,9 +548,18 @@ class BackgroundDialog(ctk.CTkToplevel):
         self.err_label.configure(text="")
         self._refresh_file_label()
 
+    def _event_map_result(self):
+        """=343: 2つともOFFならキーごと削除(None)。"""
+        mask = bool(self.mask_names_var.get())
+        hide = bool(self.hide_edges_var.get())
+        if not mask and not hide:
+            return None
+        return {"mask_names": mask, "hide_edges": hide}
+
     def _on_save(self):
         if not self._file:
-            self.result = {"background": None}
+            self.result = {"background": None,
+                           "event_map": self._event_map_result()}
             self.destroy()
             return
         raw = self.dim_var.get().strip()
@@ -517,7 +571,8 @@ class BackgroundDialog(ctk.CTkToplevel):
             self.err_label.configure(
                 text=tr("暗さ(%)は 0〜100 の整数で指定してください"))
             return
-        self.result = {"background": {"file": self._file, "dim": dim}}
+        self.result = {"background": {"file": self._file, "dim": dim},
+                       "event_map": self._event_map_result()}
         self.destroy()
 
     def _on_cancel(self):

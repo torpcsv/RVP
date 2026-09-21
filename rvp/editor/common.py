@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import customtkinter as ctk
 import json
+import tkinter as tk
 import os
 from ..scenario import AUTO_FS_TAGS, CSV_TRACK_TYPES, migrate_video_node
 from ..scenario_map import OK_COLOR
@@ -78,6 +79,183 @@ def _canvas_bg():
     return _smap.canvas_bg()
 
 
+class _SearchPopup(ctk.CTkToplevel):
+    """=345: 候補が多いオプションメニュー用の「絞り込み+スクロール」ポップアップ。
+
+    tkinter のメニューは候補が画面の高さを超えるとはみ出した分を選べない
+    (実機FB: イベント53件のうち35件目で切れて選べなくなった)。そこで候補が
+    `CTkOptionMenu.SEARCH_THRESHOLD` を超えるときだけ、この小窓を開く。
+
+    - 上の入力欄に打つと**部分一致(大文字小文字を区別しない)**で絞り込む
+    - ↑↓ で候補を移動、Enter で確定、Esc または外側クリックで閉じる
+    - 候補の**並びは元のまま**(定義順。遷移図の並びと対応が取れるため)
+    - 画面下端に入りきらないときは**上方向**へ開く
+    """
+
+    MAX_H = 320          # リスト部の最大高さ(px)。超えたらスクロール
+    MIN_W = 220
+    ROW_H = 26
+
+    def __init__(self, owner: "CTkOptionMenu", values, on_pick):
+        super().__init__(owner)
+        self._owner = owner
+        self._values = list(values)
+        self._on_pick = on_pick
+        self._rows = []          # [(value, button)]
+        self._active = 0
+        self._root_bind = None
+
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        # CTkToplevel は生成直後に既定サイズで一瞬見えるので、位置決めまで隠す
+        self.withdraw()
+
+        outer = ctk.CTkFrame(self, corner_radius=6, border_width=1,
+                             border_color=MUTED)
+        outer.pack(fill="both", expand=True)
+        self.filter_var = tk.StringVar()
+        self.entry = ctk.CTkEntry(outer, textvariable=self.filter_var,
+                                  height=28, placeholder_text=tr("絞り込み"))
+        self.entry.pack(fill="x", padx=6, pady=(6, 4))
+        self.list_frame = ctk.CTkScrollableFrame(outer, fg_color="transparent",
+                                                 width=self.MIN_W - 24,
+                                                 height=self.MAX_H)
+        self.list_frame.pack(fill="both", expand=True, padx=4, pady=(0, 6))
+        self.empty_label = ctk.CTkLabel(outer, text=tr("候補がありません"),
+                                        font=ctk.CTkFont(size=12),
+                                        text_color=TEXT_MUTED)
+
+        self.filter_var.trace_add("write", lambda *_a: self._rebuild())
+        for seq, fn in (("<Escape>", self._cancel),
+                        ("<Return>", self._accept),
+                        ("<Down>", lambda _e: self._move(1)),
+                        ("<Up>", lambda _e: self._move(-1))):
+            self.bind(seq, fn)
+            self.entry.bind(seq, fn)
+        self.bind("<FocusOut>", self._on_focus_out)
+
+        self._rebuild()
+        self._place()
+        self.deiconify()
+        self.after(10, self._grab)
+
+    # ---- 構築・表示 ----
+    def _matches(self):
+        q = self.filter_var.get().strip().lower()
+        if not q:
+            return list(self._values)
+        return [v for v in self._values if q in str(v).lower()]
+
+    def _rebuild(self):
+        for _v, b in self._rows:
+            b.destroy()
+        self._rows = []
+        vals = self._matches()
+        self.empty_label.pack_forget()
+        if not vals:
+            self.empty_label.pack(fill="x", padx=10, pady=(0, 8))
+        for v in vals:
+            b = ctk.CTkButton(
+                self.list_frame, text=str(v), height=self.ROW_H, anchor="w",
+                corner_radius=4, fg_color="transparent",
+                text_color=COMBO_TEXT, hover_color=("gray85", "gray28"),
+                font=ctk.CTkFont(size=12),
+                command=lambda val=v: self._pick(val))
+            b.pack(fill="x", padx=2, pady=1)
+            self._rows.append((v, b))
+        self._active = 0
+        self._paint_active()
+
+    def _paint_active(self):
+        for i, (_v, b) in enumerate(self._rows):
+            b.configure(fg_color=(ACCENT if i == self._active
+                                  else "transparent"),
+                        text_color=("white" if i == self._active
+                                    else COMBO_TEXT))
+
+    def _place(self):
+        self.update_idletasks()
+        w = max(self.MIN_W, self._owner.winfo_width())
+        h = min(self.winfo_reqheight(), self.MAX_H + 52)
+        x = self._owner.winfo_rootx()
+        y = self._owner.winfo_rooty() + self._owner.winfo_height()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        if y + h > sh:                     # 下に入らなければ上へ開く
+            y = max(0, self._owner.winfo_rooty() - h)
+        x = max(0, min(x, sw - w))
+        self.geometry(f"{int(w)}x{int(h)}+{int(x)}+{int(y)}")
+
+    def _grab(self):
+        try:
+            self.grab_set()
+            self.entry.focus_force()
+        except Exception:
+            pass
+        # グラブ中でも「外側クリックで閉じる」を効かせる
+        try:
+            root = self._owner.winfo_toplevel()
+            self._root_bind = root.bind("<Button-1>", self._on_root_click,
+                                        add="+")
+        except Exception:
+            self._root_bind = None
+
+    # ---- 操作 ----
+    def _move(self, delta):
+        if not self._rows:
+            return "break"
+        self._active = max(0, min(len(self._rows) - 1, self._active + delta))
+        self._paint_active()
+        return "break"
+
+    def _accept(self, _e=None):
+        if self._rows:
+            self._pick(self._rows[self._active][0])
+        return "break"
+
+    def _cancel(self, _e=None):
+        self.close()
+        return "break"
+
+    def _on_focus_out(self, _e=None):
+        # 別ウィンドウへフォーカスが移ったら閉じる(グラブ中は発火しない)
+        if not self.focus_displayof():
+            self.close()
+
+    def _on_root_click(self, e):
+        try:
+            x, y = e.x_root, e.y_root
+            if not (self.winfo_rootx() <= x
+                    <= self.winfo_rootx() + self.winfo_width()
+                    and self.winfo_rooty() <= y
+                    <= self.winfo_rooty() + self.winfo_height()):
+                self.close()
+        except Exception:
+            self.close()
+
+    def _pick(self, value):
+        self.close()
+        self._on_pick(value)
+
+    def close(self):
+        if self._root_bind is not None:
+            try:
+                self._owner.winfo_toplevel().unbind("<Button-1>",
+                                                    self._root_bind)
+            except Exception:
+                pass
+            self._root_bind = None
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        if getattr(self._owner, "_search_popup", None) is self:
+            self._owner._search_popup = None
+        try:
+            self.destroy()
+        except Exception:
+            pass
+
+
 class CTkOptionMenu(ctk.CTkOptionMenu):
     """ライトモードで文字色を黒にしてくっきり見せるオプションメニュー。
 
@@ -86,12 +264,31 @@ class CTkOptionMenu(ctk.CTkOptionMenu):
 
     =169: 無効化したときの文字色も既定を差し替える(CTk既定の gray74 は
     ライトの面 gray75 と同化して読めないため)。
+
+    =345: **候補が `SEARCH_THRESHOLD` を超えるときだけ**、通常のドロップダウン
+    ではなく絞り込み+スクロールのポップアップ(`_SearchPopup`)を開く。
+    tkinter のメニューは画面の高さを超えた分を選べないため(実機FB)。
+    ここで差し替えるので**呼び出し側は無改修**で、イベント遷移先だけでなく
+    ステート移行先など長くなりうるメニューすべてに効く。
     """
+
+    SEARCH_THRESHOLD = 20
 
     def __init__(self, *args, **kwargs):
         kwargs.setdefault("text_color", COMBO_TEXT)
         kwargs.setdefault("text_color_disabled", COMBO_TEXT_DISABLED)
         super().__init__(*args, **kwargs)
+        self._search_popup = None
+
+    def _open_dropdown_menu(self):
+        if len(self._values) <= self.SEARCH_THRESHOLD:
+            super()._open_dropdown_menu()
+            return
+        if getattr(self, "_search_popup", None) is not None:
+            self._search_popup.close()
+        self._search_popup = _SearchPopup(self, self._values,
+                                          self._dropdown_callback)
+        self._close_on_next_click = False
 
 
 # イベント/ステート/チャンネルを囲う丸角の灰色枠(背景色+枠線色)

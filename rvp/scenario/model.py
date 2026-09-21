@@ -301,6 +301,29 @@ class BackgroundSpec:
 
 
 @dataclass
+class EventMapSpec:
+    """=343: 再生タブのイベント遷移図のネタバレ防止(トップレベル "event_map")。
+
+    JSON は
+      "event_map": {"mask_names": true, "hide_edges": true}
+    の1書式。どちらも省略=false(=従来どおり全部見える)。
+
+    - mask_names: **まだ到達していないイベントの名前を「？」に伏せる**。
+      ○の下の添え字(選択肢/Nステート/▶動画)も出さない。到達済みと
+      現在地はそのまま表示する。
+    - hide_edges: **実際に通った矢印だけを描く**。未通過の矢印は描かない。
+
+    背景イラストと違い**シナリオ作成者が決める**(視聴側の設定では変えない)。
+    編集画面の図には効かない(作者は常に全部見える)。
+    """
+    mask_names: bool = False
+    hide_edges: bool = False
+
+    def any_on(self) -> bool:
+        return bool(self.mask_names or self.hide_edges)
+
+
+@dataclass
 class StateTransition:
     """ステートの移行条件と移行先。"""
     when_type: str            # channel_count / state_time / cond /

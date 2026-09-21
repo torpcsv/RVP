@@ -275,9 +275,17 @@ class _RVPAppPlayPagesMixin:
         glow = tuple(sorted({e for (e, ts) in (st.get("advance_glow") or ())
                              if now - ts < 0.5}))
         visited = tuple(sorted(st.get("visited_events") or ()))
+        # =343: シナリオ作成者が決めるネタバレ防止(mask_names/hide_edges)
+        spoil = getattr(self.scenario, "event_map", None) \
+            if self.scenario is not None else None
+        mask_names = bool(spoil and spoil.mask_names)
+        hide_edges = bool(spoil and spoil.hide_edges)
+        seen_edges = tuple(sorted(st.get("visited_edges") or ())) \
+            if hide_edges else ()
         data = self._map_data
         sig = (id(data), trail_ids, cur, cur_state, state_trail,
-               glow, visited, ctk.get_appearance_mode())
+               glow, visited, mask_names, hide_edges, seen_edges,
+               ctk.get_appearance_mode())
         if sig == self._map_sig and not center:
             return
         prev_cur = self._map_sig[2] if self._map_sig else None
@@ -302,7 +310,9 @@ class _RVPAppPlayPagesMixin:
         positions = scenario_map.draw_event_map(
             c, data, current=cur or None, trail=pairs,
             glow=glow, visited=visited, on_click=None,
-            positions=manual_pos)
+            positions=manual_pos,
+            mask_names=mask_names, hide_edges=hide_edges,
+            seen_edges=set(seen_edges) if hide_edges else None)
 
         # ステート形式イベント実行中(および停止後の余韻)は下半分にステート図
         ev_raw = data["events"].get(cur) if cur else None

@@ -11,7 +11,7 @@ from ..i18n import tr
 
 from .common import (DEFAULT_EVENT, MUTED, TEXT_HEAD, TEXT_MUTED, VIDEO_EXTS,
     _front_window, _load_raw, _title_from_path, _toolbar_sep)
-from .dialogs import BackgroundDialog
+from .dialogs import PlayOptionsDialog
 from .help import HelpDialog
 from .review import ItemReviewDialog
 from .se_bgm import _ScenarioEditorBgmMixin
@@ -448,8 +448,10 @@ class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _Sce
         self._update_vars_btn()
         # =262: 背景イラスト(「BGM」トグルの右隣=ユーザー指定Q7)。押すと
         # 画像の選択・クリア・暗さ(%)のダイアログを開く。
+        # =343: 「背景」→「再生オプション」へ意味を拡張(背景イラストに加えて
+        # イベント遷移図のネタバレ防止もここで決める。ユーザー決定)。
         self.bg_btn = ctk.CTkButton(
-            head_bar, text=tr("背景"), width=84, height=30,
+            head_bar, text=tr("再生オプション"), width=126, height=30,
             fg_color="transparent", border_width=1, border_color=MUTED,
             text_color=("gray20", "gray85"), hover_color=("gray85", "gray25"),
             command=self._open_background_dialog)
@@ -583,18 +585,24 @@ class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _Sce
         self._detail_text = dlg.result
 
     def _open_background_dialog(self):
-        """背景イラスト(トップレベル "background")の設定ダイアログを開く。
+        """再生オプション(背景イラスト=262 / イベント遷移図=343)を開く。
 
         「保存」はメモリ(self.data)への反映のみ。JSONファイルへは編集画面の
         「保存」で書き出す(紹介文と同じ作法)。パスは絶対で保持し、保存時の
         _rebased_data_for_save が保存先基準の相対パスへ付け替える(保存先の
         外にある画像は外部素材警告・素材コピーの対象=_map_item_paths)。
         """
-        dlg = BackgroundDialog(self, self.data.get("background"),
-                               self.base_dir)
+        dlg = PlayOptionsDialog(self, self.data.get("background"),
+                                self.base_dir, self.data.get("event_map"))
         self.wait_window(dlg)
         if dlg.result is None:
             return
+        # =343: 2つともOFFならキーごと消す(既定と同じなのでJSONに残さない)
+        emap = dlg.result.get("event_map")
+        if emap is None:
+            self.data.pop("event_map", None)
+        else:
+            self.data["event_map"] = emap
         bg = dlg.result.get("background")
         if bg is None:
             self.data.pop("background", None)

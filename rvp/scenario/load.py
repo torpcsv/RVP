@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 from .model import (BackgroundSpec, Channel, DeviceTrack, EventItem,
+                    EventMapSpec,
     EventState, Pan, ScenarioEvent, _is_num, check_node_color,
     check_node_pos)
 from .constants import (CH_CENTER, DEFAULT_PAN, END_CHANNEL, END_COND,
@@ -79,6 +80,30 @@ class _ScenarioLoadMixin:
                     tr("background: dim は 0〜100 の数値で指定してください"))
             background = BackgroundSpec(file=resolve(ctx, bg_file),
                                         dim=int(round(bg_dim)))
+
+        # ------ イベント遷移図のネタバレ防止(=343) ------
+        # "event_map": {"mask_names": bool, "hide_edges": bool}。省略=なし。
+        event_map = None
+        raw_map = data.get("event_map")
+        if raw_map is not None:
+            if not isinstance(raw_map, dict):
+                raise ValueError(
+                    tr("event_map はオブジェクトで指定してください"))
+            flags = {}
+            for k in ("mask_names", "hide_edges"):
+                v = raw_map.get(k, False)
+                if not isinstance(v, bool):
+                    raise ValueError(
+                        tr("event_map: {0} は true/false で指定してください"
+                           ).format(k))
+                flags[k] = v
+            unknown = sorted(set(raw_map) - {"mask_names", "hide_edges"})
+            if unknown:
+                raise ValueError(
+                    tr("event_map: 知らないキーがあります: {0}").format(
+                        ", ".join(unknown)))
+            if any(flags.values()):
+                event_map = EventMapSpec(**flags)
 
         # ---------------- 変数(vars) ----------------
 
@@ -611,4 +636,5 @@ class _ScenarioLoadMixin:
             device_enabled=device_enabled,
             bgm_enabled=bgm_enabled,
             background=background,
+            event_map=event_map,
         )

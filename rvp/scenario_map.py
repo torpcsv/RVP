@@ -31,6 +31,7 @@ STATE_EDGE_COLOR = "#8a8a8a"
 # (main.PAGE_LAMP_ON)が同色を参照しているため定数としては残す。
 CURRENT_FILL = "#9ccc3c"     # (旧)現在実行中の黄緑。ランプ色の由来として残置
 CURRENT_TEXT = "#1f1f1f"     # (旧)黄緑ノード上の文字
+MASK_LABEL = "？"            # =343: 未到達イベント名の伏せ字
 TRAIL_COLOR = "#3ddc84"      # 辿った遷移の線(緑)
 TRAIL_WIDTH = 3
 VIDEO_LABEL_COLOR = "#6aa9dc"   # 動画つきノードの「▶動画」ラベル(水色)
@@ -418,17 +419,98 @@ def layout_tree(data) -> dict:
     return positions
 
 
-def _edge_line(c, x1, y1, x2, y2, r, dash, fill, width, self_loop):
+ARC_MARGIN = 6         # =342: 迂回するかの判定でノード半径に足す余裕(px)
+_ARC_STEPS = 16        # 迂回弧を点列にするときの分割数(偶数=中点で割れる)
+
+
+def blocking_nodes(x1, y1, x2, y2, others, r=None, margin=ARC_MARGIN):
+    """=342: 2つのノードを結ぶ直線が**跨いでしまう**他のノードを返す。
+
+    others は他のノードの中心 [(x, y), ...](両端のノードは除いて渡す)。
+    線分への垂線の足が**線分の内側**にあり、その距離が `r + margin` 未満の
+    ものだけを返す(端点の円に触れているだけのものは含めない)。
+    =341 までは「同じ行で横に 120px より離れていれば弧」という距離だけの
+    規則だったため、**避ける必要がないのにカーブする**線が大量に出ていた
+    (ユーザーFB)。
+    """
+    if r is None:
+        r = NODE_R
+    dx, dy = x2 - x1, y2 - y1
+    sq = dx * dx + dy * dy
+    if sq < 1e-9:
+        return []
+    hit = []
+    for (px, py) in others:
+        t = ((px - x1) * dx + (py - y1) * dy) / sq
+        if not (0.0 < t < 1.0):
+            continue
+        cx, cy = x1 + t * dx, y1 + t * dy
+        if ((px - cx) ** 2 + (py - cy) ** 2) ** 0.5 < r + margin:
+            hit.append((px, py))
+    return hit
+
+
+def _edge_points(x1, y1, x2, y2, r, arc, clear_y=None):
+    """円周から円周までの経路を**点列**で返す(=341)。
+
+    arc: 0=直線 / +1=上へ迂回 / -1=下へ迂回。
+    clear_y: 迂回のときに**必ず越えたい y**(跨ぐノードの上端/下端。=342)。
+    返す点列は必ず奇数個で、**真ん中の要素が経路の中点**になる
+    (両矢印を中点で2分割するため)。
+    """
+    if arc == 0:
+        dx, dy = x2 - x1, y2 - y1
+        ln = (dx * dx + dy * dy) ** 0.5
+        ux, uy = dx / ln, dy / ln
+        ax, ay = x1 + ux * r, y1 + uy * r
+        bx, by = x2 - ux * r, y2 - uy * r
+        return [(ax, ay), ((ax + bx) / 2, (ay + by) / 2), (bx, by)]
+    # 迂回弧: 相手側の円周から出て、跨ぐノードの外側を通る頂点へ膨らむ
+    sgn = 1 if x2 >= x1 else -1
+    ax, ay = x1 + sgn * (r - 4), y1 - arc * 10
+    bx, by = x2 - sgn * (r - 4), y2 - arc * 10
+    # =342: 斜めの線でも両端と障害物の**外側**へ出るように頂点を決める
+    base = min(y1, y2) if arc > 0 else max(y1, y2)
+    if clear_y is not None:
+        base = min(base, clear_y) if arc > 0 else max(base, clear_y)
+    mx, my = (x1 + x2) / 2, base - arc * (r + 16)
+    # 2次ベジェが t=0.5 で頂点(mx,my)を通るような制御点
+    px, py = 2 * mx - (ax + bx) / 2, 2 * my - (ay + by) / 2
+    pts = []
+    for i in range(_ARC_STEPS + 1):
+        t = i / _ARC_STEPS
+        u = 1.0 - t
+        pts.append((u * u * ax + 2 * u * t * px + t * t * bx,
+                    u * u * ay + 2 * u * t * py + t * t * by))
+    return pts
+
+
+def _draw_poly(c, pts, fill, width, dash, shape):
+    """点列を1本の矢印(終点側に矢頭)として描く(=341)。"""
+    flat = [v for p in pts for v in p]
+    c.create_line(*flat, fill=fill, width=width,
+                  arrow="last", arrowshape=shape, dash=dash)
+
+
+def _edge_line(c, x1, y1, x2, y2, r, dash, fill, width, self_loop,
+               *, both=False, back_fill=None, back_width=None, others=()):
     """イベント図のエッジ1本を描く(形状規則は編集画面と同一)。
 
-    =299(手動配置の導入に合わせて形状規則を一般化。ユーザー要望):
-    - **行き(x2>=x1)**は「円と円の中心を結ぶ直線」を円周で切った直線
-      (出発点は円の右に限定せず、相手に最も近い円周=右下・下からも出る)。
-      同じ行で 2 列以上離れているときだけ従来の上弧(間の円を跨ぐ)。
-    - **戻り(x2<x1)**は点線(線種は呼び出し側)。行きの直線と重ならないよう、
-      中心線から**下側の法線方向**へ膨らませた弧。端点も法線方向へ 6px
-      ずらして、同じ 2 円の往復が同じ場所を通らないようにする。
-    - 同じ列(x1==x2)は中心線=縦の直線(従来と同じ)。自己ループは従来どおり。
+    =341(ユーザー決定。カーブを減らして線の占有面積と本数を下げる):
+    - **往復(行きと帰りの両方がある)は1本の両矢印**を `both=True` で描く。
+      線種は**実線固定**で、向きによる点線の区別は使わない。中点で2分割し、
+      `fill`/`width` が src→tgt 側(tgt 寄りの半分=そちらへ向く矢頭を含む)、
+      `back_fill`/`back_width` が tgt→src 側の半分の色・太さになる。
+      これで「行きだけ辿った」状態を半分の緑で表せる。
+    - **片道**は従来どおり1本の単矢印(線種は呼び出し側。戻り=点線)。
+      ただし対になる線が無いので**弧で避ける必要がなく、直線**で描く。
+    - 自己ループは従来どおり(上に小さな弧)。
+
+    =342(ユーザーFB): **弧にするのは「間に他のノードがあるとき」だけ**。
+    `others`(他のノードの中心)を受け取り、`blocking_nodes()` が跨ぐノードを
+    見つけたときだけ弧にする(右向き=上・左向き=下)。=341 までの
+    「同じ行で横 120px 超なら弧」は距離しか見ていなかったため、避ける必要の
+    ない線までカーブしていた。斜めの線も判定対象になる(従来は素通りだった)。
     """
     if self_loop:
         c.create_line(x1 - 10, y1 - r + 2, x1 - 16, y1 - r - 22,
@@ -436,36 +518,34 @@ def _edge_line(c, x1, y1, x2, y2, r, dash, fill, width, self_loop):
                       smooth=True, fill=fill, width=width,
                       arrow="last", arrowshape=(8, 10, 4), dash=dash)
         return
+    if both and (x2, y2) < (x1, y1):
+        # 両矢印は「左→右(同じ列は上→下)」の向きで組み立てる。どちらの
+        # ペアから呼ばれても同じ形・同じ弧の向きになるようにするため。
+        x1, y1, x2, y2 = x2, y2, x1, y1
+        fill, back_fill = back_fill, fill
+        width, back_width = back_width, width
     dx, dy = x2 - x1, y2 - y1
-    ln = (dx * dx + dy * dy) ** 0.5
-    if ln < 1e-6:
+    if (dx * dx + dy * dy) ** 0.5 < 1e-6:
         return
-    ux, uy = dx / ln, dy / ln
-    # 円周上の端点(中心線に沿って半径ぶん内側)
-    ax, ay = x1 + ux * r, y1 + uy * r
-    bx, by = x2 - ux * r, y2 - uy * r
-    if x2 >= x1:
-        if abs(dy) < r and dx > 120:
-            # 同じ行で離れている右方向は上弧(間の円を跨ぐ)
-            c.create_line(x1 + r - 4, y1 - 10, (x1 + x2) / 2, y1 - r - 16,
-                          x2 - r + 4, y2 - 10,
-                          smooth=True, fill=fill, width=width,
-                          arrow="last", arrowshape=(9, 11, 4), dash=dash)
-        else:
-            c.create_line(ax, ay, bx, by, fill=fill, width=width,
-                          arrow="last", arrowshape=(10, 12, 5), dash=dash)
+    arc, clear_y = 0, None
+    blockers = blocking_nodes(x1, y1, x2, y2, others, r)
+    if blockers:
+        arc = 1 if dx >= 0 else -1
+        # 跨ぐノードの外側(上弧なら上端・下弧なら下端)を必ず越える高さにする
+        clear_y = (min(py for _px, py in blockers) - r) if arc > 0 \
+            else (max(py for _px, py in blockers) + r)
+    pts = _edge_points(x1, y1, x2, y2, r, arc, clear_y)
+    shape = (9, 11, 4) if arc else (10, 12, 5)
+    if not both:
+        # 片道は分割しないので、直線は中点を挟まず2点のまま描く
+        _draw_poly(c, [pts[0], pts[-1]] if arc == 0 else pts,
+                   fill, width, dash, shape)
         return
-    # 戻り: 下側の法線へ膨らむ弧
-    nx, ny = -uy, ux
-    if ny < 0 or (abs(ny) < 1e-9 and nx < 0):
-        nx, ny = -nx, -ny
-    off = 6.0
-    ax, ay = ax + nx * off, ay + ny * off
-    bx, by = bx + nx * off, by + ny * off
-    k = r + 10
-    c.create_line(ax, ay, (ax + bx) / 2 + nx * k, (ay + by) / 2 + ny * k,
-                  bx, by, smooth=True, fill=fill, width=width,
-                  arrow="last", arrowshape=(9, 11, 4), dash=dash)
+    mid = len(pts) // 2
+    # 中点→tgt(src→tgt の矢頭)と 中点→src(tgt→src の矢頭)の2本
+    _draw_poly(c, pts[mid:], fill, width, (), shape)
+    _draw_poly(c, list(reversed(pts[:mid + 1])), back_fill, back_width,
+               (), shape)
 
 
 # ---------------- =299: 手動配置 ----------------
@@ -555,7 +635,8 @@ def manual_positions(data) -> dict:
 def draw_event_map(canvas, data, *, selected=None, current=None,
                    trail=None, glow=None, visited=None,
                    on_click=None, on_rclick=None,
-                   positions=None, on_move=None) -> dict:
+                   positions=None, on_move=None,
+                   mask_names=False, hide_edges=False, seen_edges=None) -> dict:
     """イベント図を canvas へ描画する。positions({ev_id:(x,y)})を返す。
 
     - positions: =299 手動配置の座標(None=自動配置 layout_tree)
@@ -567,18 +648,29 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
     - selected: 編集画面の選択ノード(=124: 緑コーナー枠┏┓┗┛で表示)
     - current: 現在実行中イベント(=124: selected と同じ緑コーナー枠)
     - trail: 辿った遷移の (from, to) ペア集合=緑線で強調。
-      通常の矢印に無いペア(watch遷移など)も同じ形状規則で緑線を追加描画する
+      通常の矢印に無いペア(watch遷移など)も同じ形状規則で緑線として描く。
+      =341: 往復のあるペアは1本の両矢印なので、**辿った向きの半分だけ**
+      (その向きの矢頭を含む側)が緑になる
     - glow: すごろく通過中のノードid集合(=124: 0.5秒だけ明度アップ)
     - visited: 実行済みノードid集合(=124: 減光。current は除外して渡す)
     - on_click: ノードクリック時のコールバック(ev_id)。None なら束縛しない
     - on_rclick: ノード右クリック時のコールバック(ev_id, tkイベント)。
       編集画面のカラーパレット用。None なら束縛しない
+
+    =343 ネタバレ防止(シナリオ作成者が決める。再生タブだけで使う):
+    - mask_names: **未到達のイベント名を「？」に伏せる**(visited にも
+      current にも無いノード)。○の下の添え字(選択肢/Nステート/▶動画)も出さない
+    - hide_edges: **通った矢印だけを描く**。seen_edges に無い向きは描かない
+      (往復のうち片方だけ通っていれば、その片道の矢印として描く)
+    - seen_edges: 実際に通った (from, to) ペア集合(再生側が積み上げたもの)。
+      None のときは trail を使う
     """
     c = canvas
     c.configure(bg=canvas_bg())   # テーマに応じて背景色を追従
     c.delete("all")
     r = NODE_R
     trail = set(trail or ())
+    seen = set(seen_edges) if seen_edges is not None else set(trail)
     if positions is None:
         positions = layout_tree(data)
     else:
@@ -586,35 +678,65 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
     xs = [px for (px, _py) in positions.values()] or [60]
     max_x = max(xs) + r           # 最右ノードの右端(スクロール域算出用)
 
-    # エッジ(全遷移先へ。=283: 戻り(左向き)=点線、それ以外=実線)
-    drawn_pairs: dict[tuple, tuple] = {}   # (src,tgt) -> dash
+    # エッジ(全遷移先へ。=283: 戻り(左向き)=点線、それ以外=実線。
+    # =341: 往復のあるペアは1本の両矢印(実線)にまとめる)
+    arrows: dict[tuple, tuple] = {}        # (src,tgt) -> dash
     for ev_id, (x1, y1) in positions.items():
         ev = data["events"][ev_id]
-        targets = next_targets(ev)
-        for tgt in targets:
+        for tgt in next_targets(ev):
             if tgt not in positions:
                 continue
-            x2, y2 = positions[tgt]
+            x2, _y2 = positions[tgt]
             # =283: 線種は**向き**で決める(ユーザー決定)。遷移先が遷移元より
             # **左**にある(戻り)=点線、それ以外(行き・同じ列・自己ループ)=実線。
             # 従来の「破線=複数候補の抽選/点線=全消化時の行き先」は廃止
             # (選択肢・数値入力で止まるノードは添え字「選択肢」等で分かる)。
-            dash = (2, 3) if x2 < x1 else ()
-            drawn_pairs[(ev_id, tgt)] = dash
-            if (ev_id, tgt) in trail:
-                continue           # 辿った遷移は後で緑線で上描き
-            _edge_line(c, x1, y1, x2, y2, r, dash, edge_color(), 2,
-                       self_loop=(tgt == ev_id))
+            # =341: 両矢印になるペアはこの dash を使わず実線に固定する。
+            arrows.setdefault((ev_id, tgt), (2, 3) if x2 < x1 else ())
+    # 矢印として存在しないペア(watch遷移など)も1本のエッジとして扱う(実線)
+    for (src, tgt) in set(trail) | (seen if hide_edges else set()):
+        if src in positions and tgt in positions:
+            arrows.setdefault((src, tgt), ())
+    if hide_edges:
+        # =343: 通った向きだけ残す。両方通っていれば従来どおり両矢印になる
+        arrows = {k: v for k, v in arrows.items() if k in seen}
 
-    # 辿った遷移(緑線)。矢印として存在しないペア(watch遷移など)は実線で追加
-    for (src, tgt) in trail:
-        if src not in positions or tgt not in positions:
+    def _fill_width(pair):
+        """=341: その向きを辿っていれば緑・太線、でなければ通常の線。"""
+        if pair in trail:
+            return TRAIL_COLOR, TRAIL_WIDTH
+        return edge_color(), 2
+
+    # 辿った向きを含むエッジは最後に描いて上に載せる(緑を隠さない)
+    jobs, jobs_trail = [], []
+    done = set()
+    for (src, tgt), dash in arrows.items():
+        if (src, tgt) in done:
             continue
+        done.add((src, tgt))
+        rev = (tgt, src)
+        both = src != tgt and rev in arrows
+        if both:
+            done.add(rev)
+        job = ((src, tgt), dash, both)
+        if (src, tgt) in trail or (both and rev in trail):
+            jobs_trail.append(job)
+        else:
+            jobs.append(job)
+    for (src, tgt), dash, both in jobs + jobs_trail:
         x1, y1 = positions[src]
         x2, y2 = positions[tgt]
-        dash = drawn_pairs.get((src, tgt), ())
-        _edge_line(c, x1, y1, x2, y2, r, dash, TRAIL_COLOR, TRAIL_WIDTH,
-                   self_loop=(tgt == src))
+        fill, width = _fill_width((src, tgt))
+        # =342: 両端以外のノードの中心。これを跨ぐときだけ弧になる
+        others = [p for n, p in positions.items() if n not in (src, tgt)]
+        if both:
+            back_fill, back_width = _fill_width((tgt, src))
+            _edge_line(c, x1, y1, x2, y2, r, (), fill, width,
+                       self_loop=False, both=True, others=others,
+                       back_fill=back_fill, back_width=back_width)
+        else:
+            _edge_line(c, x1, y1, x2, y2, r, dash, fill, width,
+                       self_loop=(tgt == src), others=others)
 
     # ノード
     glow = set(glow or ())
@@ -637,12 +759,29 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
         c.create_oval(nx - r, ny - r, nx + r, ny + r,
                       fill=fill, outline=outline,
                       width=2 if is_start else 1, tags=tag)
-        label = ev_id if len(ev_id) <= 8 else ev_id[:7] + "…"
+        # =343: 未到達(visited にも current にも無い)のイベント名を伏せる
+        masked = bool(mask_names) and ev_id not in visited and ev_id != current
+        if masked:
+            label = MASK_LABEL
+        else:
+            label = ev_id if len(ev_id) <= 8 else ev_id[:7] + "…"
         c.create_text(nx, ny, text=label, fill=txt, font=(appfont.FAMILY, 9), tags=tag)
         if ev_id == current or (selected is not None and ev_id == selected):
             _corner_marks(c, nx, ny, r, tag)
         # 添え字はノード下へ順に積む: Nステート → 選択肢/数値入力 → 動画
         ly = ny + r + 9
+        if masked:
+            # 伏せ字のノードは添え字も出さない(「選択肢」が見えると
+            # 分岐の存在が漏れるため。=343)
+            if on_move is not None:
+                _bind_drag(c, tag, ev_id, positions, on_click, on_move)
+            elif on_click is not None:
+                c.tag_bind(tag, "<Button-1>",
+                           lambda _e, i=ev_id: on_click(i))
+            if on_rclick is not None:
+                c.tag_bind(tag, "<Button-3>",
+                           lambda e, i=ev_id: on_rclick(i, e))
+            continue
         if has_states:
             c.create_text(nx, ly,
                           text=tr('{0}ステート').format(len(ev['states'])),
