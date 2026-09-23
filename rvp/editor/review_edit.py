@@ -383,15 +383,28 @@ class _ItemReviewEditMixin:
         self._apply_graph_heights()
 
     def _apply_graph_heights(self):
-        """=227/=232: 出ているグラフの要求高さを揃える(expand で等分)。"""
+        """=227/=232: 出ているグラフの要求高さを揃える(expand で等分)。
+
+        =346: サブは1つの枠(`edit_sub_box`)として数える。本体の各グラフと
+        サブの枠の要求高さを揃えれば expand で等分されるので、サブが
+        左右2本(5列csv)のときは枠の中の2本を**半分ずつ**にする
+        (本体1本+サブ左右 = 2:1:1、ユーザー決定)。
+        """
         shown = list(self.edit_graphs)
         # pack した直後は winfo_ismapped() がまだ 0 なので、状態で見る
-        if getattr(self, "edit_sub_graph", None) is not None and \
-                getattr(self, "_edit_sub_idx", -1) >= 0:
-            shown.append(self.edit_sub_graph)
-        h = self.EDIT_GRAPH_H if len(shown) <= 1 else self.EDIT_SUB_H
+        sub_on = getattr(self, "edit_sub_graph", None) is not None and \
+            getattr(self, "_edit_sub_idx", -1) >= 0
+        slots = len(shown) + (1 if sub_on else 0)
+        h = self.EDIT_GRAPH_H if slots <= 1 else self.EDIT_SUB_H
         for g in shown:
             g.configure(height=h)
+        if sub_on:
+            if getattr(self, "_edit_sub_pair", False):
+                half = max(1, h // 2)
+                self.edit_sub_graph.configure(height=half)
+                self.edit_sub_graph2.configure(height=h - half)
+            else:
+                self.edit_sub_graph.configure(height=h)
 
     def _edit_track_label(self, i: int) -> str:
         ttype, path, _lo, _hi, ch = self._edit_tracks[i]
@@ -775,22 +788,35 @@ class _ItemReviewEditMixin:
         self._edit_graphs[0].pack(fill="both", expand=True, pady=(6, 0))
         # =227: サブ表示(参考用の別トラック。要望6)。既定は非表示で、
         # 下のコンボから選ぶとグラフの下半分に出る。地の色を変えて区別する。
+        # =346: サブは**1つの枠(edit_sub_box)**に入れ、5列csv のときは
+        # その枠を左右2本で分ける。枠を本体のグラフと同じ要求高さにして
+        # expand で並べるので、本体1本+サブ左右=2:1:1、本体左右+サブ=
+        # 1:1:1(サブが左右なら 1:1:½:½)になる
+        self.edit_sub_box = ctk.CTkFrame(inner, fg_color="transparent",
+                                         corner_radius=0)
         self.edit_sub_model = script_edit.ScriptEditModel()
-        self.edit_sub_graph = script_edit.ScriptEditGraph(
-            inner, self.edit_sub_model, on_change=lambda: None,
-            on_select=lambda: None, on_menu=lambda *_a: None,
-            height=self.EDIT_GRAPH_H)
-        self.edit_sub_graph.make_readonly(self._edit_graphs[0])
-        # =298(要望4-④): サブ表示には縮尺・時間ラベル・追従停止中を出さない
-        self.edit_sub_graph.show_scale = False
-        self.edit_sub_graph.show_time = False
-        self.edit_sub_graph.show_follow_hint = False
-        # =232: 表示を揃える仲間(左・右・サブ)を相互に結ぶ
-        g0, g1, gs = self._edit_graphs[0], self._edit_graphs[1], \
-            self.edit_sub_graph
-        g0.peers = [g1, gs]
-        g1.peers = [g0, gs]
-        gs.peers = []
+        self.edit_sub_model2 = script_edit.ScriptEditModel()   # =346: 右
+        self.edit_sub_graphs = []
+        for _m in (self.edit_sub_model, self.edit_sub_model2):
+            _sg = script_edit.ScriptEditGraph(
+                self.edit_sub_box, _m, on_change=lambda: None,
+                on_select=lambda: None, on_menu=lambda *_a: None,
+                height=self.EDIT_GRAPH_H)
+            _sg.make_readonly(self._edit_graphs[0])
+            # =298(要望4-④): サブ表示には縮尺・時間ラベル・追従停止中を出さない
+            _sg.show_scale = False
+            _sg.show_time = False
+            _sg.show_follow_hint = False
+            _sg.peers = []
+            self.edit_sub_graphs.append(_sg)
+        self.edit_sub_graph, self.edit_sub_graph2 = self.edit_sub_graphs
+        self.edit_sub_graph.pack(fill="both", expand=True)
+        self._edit_sub_pair = False
+        # =232: 表示を揃える仲間(左・右・サブ)を相互に結ぶ(=346: サブ右も)
+        g0, g1 = self._edit_graphs[0], self._edit_graphs[1]
+        gs, gs2 = self.edit_sub_graphs
+        g0.peers = [g1, gs, gs2]
+        g1.peers = [g0, gs, gs2]
         g0.mirror = gs                 # =227 互換(テスト・既存コード)
         self._edit_sub_idx = -1
         # =224: csv(ROTATE)のときだけ出す読み方の案内(グラフのすぐ下)
@@ -1090,52 +1116,74 @@ class _ItemReviewEditMixin:
         self._show_sub(self._edit_sub_targets[k - 1] if k >= 1 else -1)
 
     def _show_sub(self, idx: int):
-        """サブ表示のトラックを切り替える(-1=非表示)。"""
+        """サブ表示のトラックを切り替える(-1=非表示)。
+
+        =346: 5列csv(左右)はサブでも**左右2本**を出す(=232 までは左だけ)。
+        """
         from .. import script_edit
         self._edit_sub_idx = idx
+        box = self.edit_sub_box
         if idx < 0:
-            if self.edit_sub_graph.winfo_ismapped():
-                self.edit_sub_graph.pack_forget()
+            if box.winfo_ismapped() or box.winfo_manager():
+                box.pack_forget()
+            self._set_sub_pair(False)
             self._apply_graph_heights()       # =232: 残りで等分し直す
             return
         ttype, path, lo, hi, ch = self._edit_tracks[idx]
-        pts = []
-        try:
-            if ch is not None:
-                # =232: 5列(左右)の候補は**左(ロータ1)**を参考表示する
-                c0 = ch[0] if isinstance(ch, tuple) else ch
-                _cols, pts, _all = script_edit.load_csv_points(path, c0)
-            else:
-                _raw, pts = script_edit.load_funscript_raw(path)
-        except Exception:
-            pts = []
+        pair = isinstance(ch, tuple)
+        chans = list(ch) if pair else [ch]
         # =297: サブ表示も種別の分解能で読む(csv=200)
         sub_max = script_edit.CSV_POS_MAX if ch is not None else 100
-        self.edit_sub_model.pos_max = sub_max
         sub_c = script_edit.PAT_CENTERS.get(self._pat_mode_of(ttype))
-        self.edit_sub_model.pat_center = None if sub_c is None \
+        center = None if sub_c is None \
             else int(round(sub_c * sub_max / 100.0))
-        self.edit_sub_model.load(pts)
-        g = self.edit_sub_graph
-        g.pat_center = self.edit_sub_model.pat_center
         # サブ側の作法(階段/ヒートマップ)は**その種別のもの**にする
         step = (ch is not None) or ttype in SCRIPT_EDIT_STEP_TYPES
-        g.step = step
-        g.heat = not step
-        g.region = self.edit_graph.region
-        if not g.winfo_ismapped():
+        self._set_sub_pair(pair)
+        main = self._edit_graphs[0]
+        for k, c in enumerate(chans):
+            pts = []
+            try:
+                if c is not None:
+                    _cols, pts, _all = script_edit.load_csv_points(path, c)
+                else:
+                    _raw, pts = script_edit.load_funscript_raw(path)
+            except Exception:
+                pts = []
+            m = (self.edit_sub_model, self.edit_sub_model2)[k]
+            m.pos_max = sub_max
+            m.pat_center = center
+            m.load(pts)
+            g = self.edit_sub_graphs[k]
+            g.pat_center = center
+            g.step = step
+            g.heat = not step
+            g.region = self.edit_graph.region
+        if not pair:
+            self.edit_sub_model2.load([])
+        if not box.winfo_manager():
             # **一番下**へ出す(=227 要望6)。どれも expand=True なので、
             # 要求の高さを揃えれば縦に等分される(=232: 3本のときも同じ)
-            g.pack(fill="both", expand=True, pady=(4, 0),
-                   before=self.edit_csv_hint
-                   if self.edit_csv_hint.winfo_ismapped()
-                   else self.edit_hint_label)
+            box.pack(fill="both", expand=True, pady=(4, 0),
+                     before=self.edit_csv_hint
+                     if self.edit_csv_hint.winfo_ismapped()
+                     else self.edit_hint_label)
         self._apply_graph_heights()
-        main = self._edit_graphs[0]
-        g.level = main.level
-        g.view_ms = main.view_ms
-        g.now_ms = main.now_ms
-        g.redraw()
+        for g in self.edit_sub_graphs[:len(chans)]:
+            g.level = main.level
+            g.view_ms = main.view_ms
+            g.now_ms = main.now_ms
+            g.redraw()
+
+    def _set_sub_pair(self, on: bool):
+        """=346: サブの2本目(右=ロータ2)を出し入れする。"""
+        on = bool(on)
+        g2 = self.edit_sub_graph2
+        if on and not g2.winfo_manager():
+            g2.pack(fill="both", expand=True, after=self.edit_sub_graph)
+        elif not on and g2.winfo_manager():
+            g2.pack_forget()
+        self._edit_sub_pair = on
 
     def _on_edit_new_track(self):
         """=227: **別のトラックを新しく作る**導線(要望5)。
@@ -1426,8 +1474,8 @@ class _ItemReviewEditMixin:
         gp = self._grid_pos_map.get(self.grid_pos_var.get(), 10)
         ga = self._grid_at_map.get(self.grid_at_var.get(), 100)
         graphs = list(self.edit_graphs)
-        if getattr(self, "edit_sub_graph", None) is not None:
-            graphs.append(self.edit_sub_graph)
+        if getattr(self, "edit_sub_graphs", None) is not None:
+            graphs.extend(self.edit_sub_graphs)      # =346: サブ右も
         for g in graphs:
             g.grid_pos = gp
             g.grid_at = ga

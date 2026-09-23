@@ -660,12 +660,19 @@ class _RVPAppTabPlayMixin:
         # (tabs.pack の pady 18→4)+メッセージ上余白(8→4)の計18pxで
         # 相殺=5ページの表示域は不変(②デバイス調整は空き+1pxしか
         # ないため必須の設計)。
+        # =350: 高さを 14→28px(2倍)にしてクリックしやすくし、消灯中の
+        # セグメントにだけページを表す白いアイコンを中央に出す(ユーザー依頼。
+        # 点灯中=黄緑は従来どおりアイコンなし)。「文字や記号は描かない」
+        # (=89)はこの依頼で変更。増えた14pxは切替領域(play_content)から
+        # 引く=各ページの表示域が14px減る(はみ出すページはホイールで送れる)。
         lamp_row = ctk.CTkFrame(wrap, fg_color="transparent",
                                 height=self.PAGE_LAMP_H)
         lamp_row.pack(fill="x", pady=(4, 0))
         lamp_row.pack_propagate(False)
         self.page_lamp_row = lamp_row
         self.page_lamps = []
+        self.page_lamp_icons = []    # =350 各セグメントのアイコン(tk.Label)
+        imgs = self._load_page_lamp_icons()
         for i in range(self.PLAY_PAGE_COUNT):
             seg = tk.Frame(lamp_row, bg=self.PAGE_LAMP_OFF,
                            height=self.PAGE_LAMP_H, bd=0,
@@ -674,6 +681,18 @@ class _RVPAppTabPlayMixin:
                      padx=(0 if i == 0 else 6, 0))
             seg.bind("<Button-1>", lambda _e, p=i: self._goto_play_page(p))
             self.page_lamps.append(seg)
+            # セグメントの i 番目は常に PLAY_PAGE_ORDER[i](3画面構成は
+            # 末尾2枚を畳むだけ)なので、アイコンはページIDで引ける。
+            img = imgs.get(self.PLAY_PAGE_ORDER[i])
+            icon = None
+            if img is not None:
+                icon = tk.Label(seg, image=img, bg=self.PAGE_LAMP_OFF,
+                                bd=0, highlightthickness=0, padx=0, pady=0,
+                                cursor="hand2")
+                # アイコンの上をクリックしても同じページへ飛ぶ
+                icon.bind("<Button-1>",
+                          lambda _e, p=i: self._goto_play_page(p))
+            self.page_lamp_icons.append(icon)
         self._update_page_lamp()     # 起動時は①が点灯
         # 初期ページ(①再生)を表示(=61: pack ではなく place)
         self._play_scroll = 0

@@ -32,6 +32,10 @@ class Scenario(_ScenarioLoadMixin):
     # 意味が逆)。False のシナリオは "bgm" 定義がJSONに残っていても
     # 再生時にBGMを鳴らさない(UIも非表示。データは保持=device と同じ方式)。
     bgm_enabled: bool = False
+    # =347: 背景機能フラグ(トップレベル "background_enabled")。省略=False
+    # (旧形式のトップレベル background を持つシナリオは省略時 True)。
+    # False なら各ノードの "background" が残っていても表示しない。
+    background_enabled: bool = False
     # =262: 背景イラスト(トップレベル "background")。省略=None=なし。
     background: "BackgroundSpec | None" = None
     # =343: イベント遷移図のネタバレ防止(トップレベル "event_map")。

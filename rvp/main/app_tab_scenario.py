@@ -254,7 +254,10 @@ class _RVPAppTabScenarioMixin:
         self._scenario_has_device = self._scan_scenario_has_device(sc)
         self._apply_play_pages()
         # =262: 背景イラスト(シナリオ指定×視聴側設定のANDで表示)
-        self.bg_art.set_scenario(sc.background)
+        # =347: 背景はノードごと。再生前は**開始ノードの背景**を見せておく
+        # (旧形式のトップレベル background は読み込み時に開始ノードへ移る)
+        self.bg_art.set_scenario(self._start_background(sc))
+        self._bg_seq_seen = self.player.state.get("bg_seq", 0)
         # 未接続プレビュー用に、2ch(タイプBのCSV)rotate内容を持つレーンを検出
         self._scenario_split_lanes = self._scan_scenario_split_lanes(sc)
         # =107: 動画つきシナリオなら接続タブのmpv欄を自動で開く(停止状態の
@@ -732,3 +735,15 @@ class _RVPAppTabScenarioMixin:
         =152: 編集画面が既に開いていれば、それを前面化するだけ(2つ開かない)。
         """
         return self._open_editor(None)
+
+    @staticmethod
+    def _start_background(sc):
+        """=347: 開始イベントの開始ステートの背景(BackgroundSpec|None)。"""
+        if not getattr(sc, "background_enabled", False):
+            return None
+        ev = sc.events.get(sc.start)
+        st = ev.states.get(ev.start_state) if ev is not None else None
+        nb = getattr(st, "background", None)
+        if nb is None or nb.mode != "set":
+            return None
+        return nb.spec

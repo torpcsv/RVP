@@ -520,9 +520,10 @@ class ItemReviewDialog(_ItemReviewPlaybackMixin, _ItemReviewEditMixin, _ItemRevi
             for gi, g in enumerate(self._edit_graphs):
                 g.wave_mode = self._wave_mode_key
                 g.wave_channel = gi if self._edit_pair else None
-            self.edit_sub_graph.wave_mode = self._wave_mode_key
-            self.edit_sub_graph.wave_channel = None
-            for g in self._edit_graphs + [self.edit_sub_graph]:
+            for _sg in self.edit_sub_graphs:          # =346: サブ右も
+                _sg.wave_mode = self._wave_mode_key
+                _sg.wave_channel = None
+            for g in self._edit_graphs + self.edit_sub_graphs:
                 # 非表示のグラフは描かない(redraw の _sync_mirror が
                 # 古い表示範囲をアクティブ側へ押し戻してしまうため)
                 try:
@@ -597,7 +598,7 @@ class ItemReviewDialog(_ItemReviewPlaybackMixin, _ItemReviewEditMixin, _ItemRevi
         gv.wave_env = env
         gv.wave_offset = float(self.spec.get("audio_lo") or 0.0)
         if self._edit_built:
-            for g in self._edit_graphs + [self.edit_sub_graph]:
+            for g in self._edit_graphs + self.edit_sub_graphs:
                 g.wave_env = env
                 g.wave_offset = 0.0
         self._push_wave_mode()

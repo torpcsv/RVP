@@ -6,6 +6,7 @@ import tkinter as tk
 from ..i18n import tr
 
 from .common import CTkOptionMenu, MUTED, TEXT_MUTED
+from . import common as _clr   # =352 テーマ追従の色は定義元を参照
 
 
 class StateChoiceEditor(ctk.CTkFrame):
@@ -28,6 +29,7 @@ class StateChoiceEditor(ctk.CTkFrame):
     SHOW_START = tr("ステート開始時")
     SHOW_END = tr("ステート内の全チャンネル終了時")
     SHOW_SEC = tr("ステート開始から指定時間後")
+    AH_DEFAULT = tr("デフォルト遷移先へ")      # =352 全部隠れたとき
 
     def __init__(self, master, owner):
         super().__init__(master, fg_color="transparent")
@@ -92,9 +94,10 @@ class StateChoiceEditor(ctk.CTkFrame):
             dflt_row, variable=self.dflt_to_var, width=140, height=26,
             values=[""],
             fg_color=("gray75", "gray28"), button_color=("gray70", "gray33"))
-        ctk.CTkLabel(dflt_row, text=tr("(タイムアウト時の行き先)"),
-                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED
-                     ).pack(side="right")
+        # =352: 説明は次の行へ(メニューが削られないように)
+        ctk.CTkLabel(self, text=tr("(タイムアウト時の行き先)"),
+                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
+                     anchor="w").pack(fill="x", padx=(8, 0))
 
         stay_row = ctk.CTkFrame(self, fg_color="transparent")
         stay_row.pack(fill="x", pady=(4, 0))
@@ -109,8 +112,39 @@ class StateChoiceEditor(ctk.CTkFrame):
                      font=ctk.CTkFont(size=11), text_color=TEXT_MUTED
                      ).pack(side="left", padx=8)
 
+        # =352: 訪問済みの行き先を隠す+全部隠れたときの行き先
+        hv_row = ctk.CTkFrame(self, fg_color="transparent")
+        hv_row.pack(fill="x", pady=(4, 0))
+        self.hv_var = tk.BooleanVar(value=False)
+        self.hv_check = ctk.CTkCheckBox(
+            hv_row, text=tr("訪問済みの行き先を隠す"), variable=self.hv_var,
+            font=ctk.CTkFont(size=12), checkbox_width=18, checkbox_height=18,
+            command=self.update_ui)
+        self.hv_check.pack(side="left")
+        ctk.CTkLabel(hv_row,
+                     text=tr("(このイベント中に通ったステート・入ったイベントを出さない)"),
+                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
+                     wraplength=330, justify="left"
+                     ).pack(side="left", padx=8)
+        self.ah_row = ctk.CTkFrame(self, fg_color="transparent")
+        ctk.CTkLabel(self.ah_row, text=tr("全部隠れたとき:"),
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED
+                     ).pack(side="left")
+        self.ah_var = tk.StringVar(value=self.AH_DEFAULT)
+        CTkOptionMenu(
+            self.ah_row, variable=self.ah_var, width=170, height=26,
+            values=[self.AH_DEFAULT, self.DFLT_STATE, self.DFLT_EVENT],
+            fg_color=("gray75", "gray28"), button_color=("gray70", "gray33"),
+            command=lambda _v: self.update_ui()).pack(side="left", padx=6)
+        self.ah_to_var = tk.StringVar(value="")
+        self.ah_to_menu = CTkOptionMenu(
+            self.ah_row, variable=self.ah_to_var, width=140, height=26,
+            values=[""],
+            fg_color=("gray75", "gray28"), button_color=("gray70", "gray33"))
+
         show_row = ctk.CTkFrame(self, fg_color="transparent")
         show_row.pack(fill="x", pady=(4, 4))
+        self.show_row = show_row
         ctk.CTkLabel(show_row, text=tr("表示タイミング:"),
                      font=ctk.CTkFont(size=12), text_color=TEXT_MUTED
                      ).pack(side="left")
@@ -126,10 +160,12 @@ class StateChoiceEditor(ctk.CTkFrame):
         self.ssec_label = ctk.CTkLabel(show_row, text=tr("秒"),
                                        font=ctk.CTkFont(size=11),
                                        text_color=TEXT_MUTED)
-        ctk.CTkLabel(show_row,
+        # =352: 長い説明は次の行へ(はみ出して切れていた)
+        ctk.CTkLabel(self,
                      text=tr("(選択/タイムアウトで即座に移行。全チャンネルが終わっても選ばれるまで待機)"),
-                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED
-                     ).pack(side="left", padx=8)
+                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
+                     anchor="w", wraplength=560, justify="left"
+                     ).pack(fill="x", padx=(8, 0), pady=(0, 4))
 
     # ---- 候補の名前 ----
 
@@ -153,48 +189,59 @@ class StateChoiceEditor(ctk.CTkFrame):
         num = ctk.CTkLabel(row, text="", width=22, font=ctk.CTkFont(size=12),
                            text_color=TEXT_MUTED)
         num.pack(side="left")
-        label_var = tk.StringVar(value=label)
-        label_entry = ctk.CTkEntry(row, textvariable=label_var, width=220,
-                                   height=26,
-                                   placeholder_text=tr("ボタンの表示テキスト"))
-        label_entry.pack(side="left", padx=(2, 6))
-        ctk.CTkLabel(row, text="→", font=ctk.CTkFont(size=12),
-                     text_color=TEXT_MUTED).pack(side="left")
+        # =352: 右端に「条件」ボタンが増えたので、右側(✕→条件→変数→行き先
+        # →種別→→)は右から pack し、表示テキスト欄は残りの幅に伸ばす
         kind_var = tk.StringVar(
             value=self.KIND_EVENT if to_event else self.KIND_STATE)
-        entry = {"frame": row, "num": num, "label_var": label_var,
-                 "label_entry": label_entry, "kind_var": kind_var,
+        entry = {"frame": row, "num": num, "kind_var": kind_var,
                  "raw": dict(raw or {})}
-        kind_menu = CTkOptionMenu(
-            row, variable=kind_var, width=96, height=26,
-            values=[self.KIND_STATE, self.KIND_EVENT],
-            fg_color=("gray75", "gray28"), button_color=("gray70", "gray33"),
-            command=lambda _v, e=entry: self._on_kind_change(e))
-        kind_menu.pack(side="left", padx=(6, 0))
-        ids = self._ids_for(kind_var.get())
-        to_var = tk.StringVar(value=to_id if to_id in ids else ids[0])
-        to_menu = CTkOptionMenu(row, variable=to_var, width=150, height=26,
-                                values=ids,
-                                fg_color=("gray75", "gray28"),
-                                button_color=("gray70", "gray33"))
-        to_menu.pack(side="left", padx=6)
-        entry.update({"to_var": to_var, "to_menu": to_menu,
-                      "kind_menu": kind_menu})
-        if self.owner._has_vars():
-            ops_btn = ctk.CTkButton(
-                row, text="", width=86, height=26,
-                font=ctk.CTkFont(size=11),
-                fg_color="transparent", border_width=1, border_color=MUTED,
-                text_color=("gray20", "gray85"), hover_color=("gray85", "gray28"),
-                command=lambda e=entry: self._edit_row_ops(e))
-            ops_btn.pack(side="left", padx=(6, 0))
-            entry["ops_btn"] = ops_btn
-            self._update_ops_btn(entry)
         ctk.CTkButton(row, text="✕", width=26, height=26,
                       fg_color="transparent", text_color="#e05a5a",
                       hover_color=("gray85", "gray28"),
                       command=lambda e=entry: self._delete_row(e)
-                      ).pack(side="left", padx=(4, 0))
+                      ).pack(side="right", padx=(4, 0))
+        if self.owner._has_vars():
+            when_btn = ctk.CTkButton(
+                row, text="", width=66, height=26,
+                font=ctk.CTkFont(size=11),
+                fg_color="transparent", border_width=1, border_color=MUTED,
+                text_color=("gray20", "gray85"), hover_color=("gray85", "gray28"),
+                command=lambda e=entry: self._edit_row_when(e))
+            when_btn.pack(side="right", padx=(4, 0))
+            entry["when_btn"] = when_btn
+            ops_btn = ctk.CTkButton(
+                row, text="", width=66, height=26,
+                font=ctk.CTkFont(size=11),
+                fg_color="transparent", border_width=1, border_color=MUTED,
+                text_color=("gray20", "gray85"), hover_color=("gray85", "gray28"),
+                command=lambda e=entry: self._edit_row_ops(e))
+            ops_btn.pack(side="right", padx=(4, 0))
+            entry["ops_btn"] = ops_btn
+        ids = self._ids_for(kind_var.get())
+        to_var = tk.StringVar(value=to_id if to_id in ids else ids[0])
+        to_menu = CTkOptionMenu(row, variable=to_var, width=130, height=26,
+                                values=ids,
+                                fg_color=("gray75", "gray28"),
+                                button_color=("gray70", "gray33"))
+        to_menu.pack(side="right", padx=(6, 0))
+        kind_menu = CTkOptionMenu(
+            row, variable=kind_var, width=86, height=26,
+            values=[self.KIND_STATE, self.KIND_EVENT],
+            fg_color=("gray75", "gray28"), button_color=("gray70", "gray33"),
+            command=lambda _v, e=entry: self._on_kind_change(e))
+        kind_menu.pack(side="right", padx=(6, 0))
+        ctk.CTkLabel(row, text="→", font=ctk.CTkFont(size=12),
+                     text_color=TEXT_MUTED).pack(side="right", padx=(6, 0))
+        label_var = tk.StringVar(value=label)
+        label_entry = ctk.CTkEntry(row, textvariable=label_var, width=110,
+                                   height=26,
+                                   placeholder_text=tr("ボタンの表示テキスト"))
+        label_entry.pack(side="left", padx=(2, 0), fill="x", expand=True)
+        entry.update({"label_var": label_var, "label_entry": label_entry,
+                      "to_var": to_var, "to_menu": to_menu,
+                      "kind_menu": kind_menu})
+        self._update_ops_btn(entry)
+        self._update_when_btn(entry)
         self.rows.append(entry)
         self._renumber()
 
@@ -208,6 +255,38 @@ class StateChoiceEditor(ctk.CTkFrame):
         if entry.get("ops_btn"):
             n = len(entry["raw"].get("ops") or [])
             entry["ops_btn"].configure(text=tr("変数({0})").format(n))
+
+    def _update_when_btn(self, entry):
+        """=352: 表示条件ボタン「条件(n)」。条件付きは枠をアクセント色・太く。"""
+        btn = entry.get("when_btn")
+        if btn:
+            n = len(entry["raw"].get("when") or [])
+            btn.configure(text=tr("条件({0})").format(n),
+                          border_color=_clr.ACCENT if n else MUTED,
+                          border_width=2 if n else 1)
+
+    def _edit_row_when(self, entry):
+        """=352: 選択肢1件の表示条件(判定式の AND)を編集する。"""
+        from .dialogs import ItemWhenDialog
+        o = self.owner
+        idx = self.rows.index(entry) + 1
+        dlg = ItemWhenDialog(
+            o, tr("選択肢{0}").format(idx), entry["raw"].get("when") or [],
+            o._var_names(), o._string_var_names(),
+            heading=tr("表示条件"),
+            desc=tr("すべての条件が成立しているときだけ、この選択肢を表示します"
+                    "(判定は選択肢を表示した瞬間)。"))
+        o.wait_window(dlg)
+        if dlg.result is None:
+            return
+        if dlg.result:
+            entry["raw"]["when"] = dlg.result
+        else:
+            entry["raw"].pop("when", None)
+        self._update_when_btn(entry)
+        self.update_ui()
+        if hasattr(o, "_hist_check"):
+            o._hist_check()
 
     def _edit_row_ops(self, entry):
         idx = self.rows.index(entry) + 1
@@ -281,6 +360,25 @@ class StateChoiceEditor(ctk.CTkFrame):
                 self.dflt_to_menu.pack(side="left", padx=(6, 0))
         else:
             self.dflt_to_menu.pack_forget()
+        # =352: 全部隠れたときの行き先(隠す仕組みがあるときだけ)
+        hides = self.hv_var.get() or any(e["raw"].get("when")
+                                         for e in self.rows)
+        if hides:
+            if not self.ah_row.winfo_manager():
+                self.ah_row.pack(fill="x", pady=(4, 0), before=self.show_row)
+            a = self.ah_var.get()
+            if a in (self.DFLT_STATE, self.DFLT_EVENT):
+                ids = self._ids_for(self.KIND_EVENT if a == self.DFLT_EVENT
+                                    else self.KIND_STATE)
+                self.ah_to_menu.configure(values=ids)
+                if self.ah_to_var.get() not in ids:
+                    self.ah_to_var.set(ids[0])
+                if not self.ah_to_menu.winfo_manager():
+                    self.ah_to_menu.pack(side="left", padx=(6, 0))
+            else:
+                self.ah_to_menu.pack_forget()
+        else:
+            self.ah_row.pack_forget()
         if self.show_var.get() == self.SHOW_SEC:
             self.ssec_entry.pack(side="left", padx=(6, 2))
             self.ssec_label.pack(side="left")
@@ -296,9 +394,22 @@ class StateChoiceEditor(ctk.CTkFrame):
         self.clear_rows()
         self.extra = {k: v for k, v in t.items()
                       if k not in ("when", "choice", "timeout", "default",
-                                   "show", "on_timeout", "skip")}
+                                   "show", "on_timeout", "skip",
+                                   "hide_visited", "when_all_hidden")}
         self.timeout_ops = list(t.get("on_timeout") or [])
         self.stay_var.set(t.get("skip") == "stay")
+        # =352
+        self.hv_var.set(t.get("hide_visited") is True)
+        ah = t.get("when_all_hidden")
+        ato = ah.get("to") if isinstance(ah, dict) else None
+        if isinstance(ato, dict) and ato.get("event"):
+            self.ah_var.set(self.DFLT_EVENT)
+            self.ah_to_var.set(ato["event"])
+        elif isinstance(ato, str):
+            self.ah_var.set(self.DFLT_STATE)
+            self.ah_to_var.set(ato)
+        else:
+            self.ah_var.set(self.AH_DEFAULT)
         for ent in t.get("choice") or []:
             if isinstance(ent, dict):
                 self.add_row(str(ent.get("label", "")), ent.get("to"), raw=ent)
@@ -395,6 +506,23 @@ class StateChoiceEditor(ctk.CTkFrame):
             value["skip"] = "stay"
         if self.timeout_ops:
             value["on_timeout"] = self.timeout_ops
+        # =352: 訪問済みを隠す/全部隠れたときの行き先
+        if self.hv_var.get():
+            value["hide_visited"] = True
+        hides = self.hv_var.get() or any(e.get("when") for e in entries)
+        a = self.ah_var.get()
+        if hides and a == self.DFLT_STATE:
+            to = self.ah_to_var.get()
+            if to not in self._state_ids:
+                mark(self.ah_to_menu, "error")
+                return tr("{0}: 全部隠れたときの遷移先のステートを選択してください").format(where), None
+            value["when_all_hidden"] = {"to": to}
+        elif hides and a == self.DFLT_EVENT:
+            to = self.ah_to_var.get()
+            if to not in events:
+                mark(self.ah_to_menu, "error")
+                return tr("{0}: 全部隠れたときの遷移先のイベントを選択してください").format(where), None
+            value["when_all_hidden"] = {"to": {"event": to}}
         for k, v in self.extra.items():
             value.setdefault(k, v)
         return None, value
@@ -405,4 +533,11 @@ class StateChoiceEditor(ctk.CTkFrame):
         for e in self.rows:
             (ev if e["kind_var"].get() == self.KIND_EVENT else st).add(
                 e["to_var"].get())
+        # =352: 全部隠れたときの指定行き先も
+        if self.ah_row.winfo_manager():
+            a = self.ah_var.get()
+            if a == self.DFLT_EVENT:
+                ev.add(self.ah_to_var.get())
+            elif a == self.DFLT_STATE:
+                st.add(self.ah_to_var.get())
         return st, ev

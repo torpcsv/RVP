@@ -52,6 +52,42 @@ def parse_range(ctx, raw_range, where, label="range"):
     return start_s, end_s
 
 
+def _parse_item_when(ctx, raw, where) -> tuple:
+    """=349: アイテムの再生条件 "when"(判定式の AND リスト。cond と同じ書式)。"""
+    if not isinstance(raw, dict) or raw.get("when") is None:
+        return ()
+    from .parse_vars import parse_conds
+    return tuple(parse_conds(ctx, raw.get("when"),
+                             tr("{0} when").format(where)))
+
+
+def parse_item_range(ctx, raw_range, where):
+    """=348: アイテムの区間。start/end に {"var": 数値変数} も書ける。
+
+    戻り値: (start秒, end秒|None, start変数|None, end変数|None)。変数の
+    ほうは読み込み時に値が分からないので、定数どうしのときだけ前後関係を
+    検証する(実行時の不正値は _resolve_item_range が扱う)。
+    """
+    if isinstance(raw_range, dict) and any(
+            isinstance(raw_range.get(k), dict) for k in ("start", "end")):
+        sv = ev = None
+        plain = dict(raw_range)
+        for key in ("start", "end"):
+            v = raw_range.get(key)
+            if isinstance(v, dict):
+                _c, ref = parse_numref(ctx, v, tr("{0} range の {1}").format(
+                    where, key))
+                if key == "start":
+                    sv = ref.var
+                else:
+                    ev = ref.var
+                plain.pop(key, None)
+        start_s, end_s = parse_range(ctx, plain, where)
+        return start_s, end_s, sv, ev
+    start_s, end_s = parse_range(ctx, raw_range, where)
+    return start_s, end_s, None, None
+
+
 def parse_pan(ctx, raw, where: str) -> Pan | None:
     """pan指定を解析する。{"left":1.0,"right":0.2} 形式。未指定はNone。"""
     if raw is None:
@@ -147,8 +183,10 @@ def parse_video_item(ctx, raw: dict, where: str) -> EventItem:
             {k: rv.get(k) for k in ("start", "end")}, where, "video")
     else:
         raise ValueError(tr('{0}: video の指定が不正です').format(where))
+    start_var = end_var = None
     if raw.get("range") is not None:
-        start_s, end_s = parse_range(ctx, raw.get("range"), where)
+        start_s, end_s, start_var, end_var = parse_item_range(
+            ctx, raw.get("range"), where)
     tracks = parse_tracks(ctx, raw, vfile, where)
     # =74: 重みは定数 or {"var":..}(0/負も受理=実行時に出さない)
     w_const, w_ref = parse_numref(ctx,
@@ -162,7 +200,9 @@ def parse_video_item(ctx, raw: dict, where: str) -> EventItem:
                      on_complete=parse_ops(ctx,
                          raw.get("on_complete"),
                          tr("{0} on_complete").format(where)),
-                     start_s=start_s, end_s=end_s)
+                     start_s=start_s, end_s=end_s,
+                     start_var=start_var, end_var=end_var,
+                         when=_parse_item_when(ctx, raw, where))
 
 
 def parse_item(ctx, raw, where: str) -> EventItem:
@@ -175,7 +215,8 @@ def parse_item(ctx, raw, where: str) -> EventItem:
         return EventItem(audio=audio, tracks=tracks)
     if isinstance(raw, dict):
         # =59: 音声・スクリプトのみアイテムにも区間指定を導入
-        start_s, end_s = parse_range(ctx, raw.get("range"), where)
+        start_s, end_s, start_var, end_var = parse_item_range(
+            ctx, raw.get("range"), where)
         audio = resolve(ctx, raw.get("audio"))
         if not audio:
             # スクリプトのみアイテム: audio 省略は tracks/funscript の
@@ -205,7 +246,9 @@ def parse_item(ctx, raw, where: str) -> EventItem:
                                      else None),
                          pan=pan, on_play=on_play,
                          on_complete=on_complete,
-                         start_s=start_s, end_s=end_s)
+                         start_s=start_s, end_s=end_s,
+                         start_var=start_var, end_var=end_var,
+                         when=_parse_item_when(ctx, raw, where))
     raise ValueError(tr('{0}: items の要素が不正です').format(where))
 
 
@@ -259,3 +302,52 @@ def parse_bgm(ctx, raw, where: str) -> BgmSpec | None:
     pan = parse_pan(ctx, raw.get("pan"), w)
     return BgmSpec(mode="set", items=tuple(items), order=order,
                    pan=pan)
+
+
+BG_FADE_DEFAULT = 0.5      # =347: 背景の切り替えの既定(秒)
+BG_FADE_MAX = 10.0
+
+
+def parse_bg_file_dim(ctx, raw, w: str):
+    """背景の {file, dim} を BackgroundSpec にする(=262 の書式。=347 で共用)。"""
+    from .model import BackgroundSpec
+    bg_file = raw.get("file")
+    if not isinstance(bg_file, str) or not bg_file.strip():
+        raise ValueError(tr("{0}: file を指定してください").format(w))
+    bg_dim = raw.get("dim", 40)
+    if isinstance(bg_dim, bool) or not isinstance(bg_dim, (int, float)) \
+            or not (0 <= bg_dim <= 100):
+        raise ValueError(
+            tr("{0}: dim は 0〜100 の数値で指定してください").format(w))
+    return BackgroundSpec(file=resolve(ctx, bg_file), dim=int(round(bg_dim)))
+
+
+def parse_node_background(ctx, raw, where: str):
+    """ノードの "background" キーを解析する(=347)。
+
+    省略/None = 「前の背景を引き継ぐ」(None)。{"off": true} = 背景オフ。
+    {"file", "dim"} = 背景を指定。どちらも "fade"(秒・0〜10・省略0.5)可。
+    文字列 "bg.png" は {"file": "bg.png"} と同じ。
+    """
+    from .model import NodeBackground
+    if raw is None:
+        return None
+    w = tr("{0} background").format(where)
+    if isinstance(raw, str):
+        raw = {"file": raw}
+    if not isinstance(raw, dict):
+        raise ValueError(
+            tr("{0}: オブジェクトで指定してください").format(w))
+    fade = raw.get("fade", BG_FADE_DEFAULT)
+    if isinstance(fade, bool) or not isinstance(fade, (int, float)) \
+            or not (0 <= fade <= BG_FADE_MAX):
+        raise ValueError(
+            tr("{0}: fade は 0〜10 の秒数で指定してください").format(w))
+    if "off" in raw:
+        if raw["off"] is not True:
+            raise ValueError(
+                tr('{0}: off は true のみ指定できます'
+                   '(引き継ぐ場合はキーごと省略します)').format(w))
+        return NodeBackground(mode="off", fade=float(fade))
+    return NodeBackground(mode="set", spec=parse_bg_file_dim(ctx, raw, w),
+                          fade=float(fade))

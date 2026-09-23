@@ -288,6 +288,9 @@ def next_targets(ev) -> list[str]:
         draw = nxt.get("default")
         if isinstance(draw, dict) and draw.get("to"):
             out.append(draw["to"])
+        ah = nxt.get("when_all_hidden")                 # =352
+        if isinstance(ah, dict) and isinstance(ah.get("to"), str):
+            out.append(ah["to"])
         for row in nxt.get("cond") or []:
             if isinstance(row, dict) and row.get("to"):
                 out.append(row["to"])
@@ -318,11 +321,12 @@ def state_choice_event_targets(ev) -> list[str]:
             if isinstance(to, dict) and isinstance(to.get("event"), str) \
                     and to["event"] not in out:
                 out.append(to["event"])
-        draw = t.get("default")
-        if isinstance(draw, dict) and isinstance(draw.get("to"), dict) \
-                and isinstance(draw["to"].get("event"), str) \
-                and draw["to"]["event"] not in out:
-            out.append(draw["to"]["event"])
+        for key in ("default", "when_all_hidden"):     # =352
+            draw = t.get(key)
+            if isinstance(draw, dict) and isinstance(draw.get("to"), dict) \
+                    and isinstance(draw["to"].get("event"), str) \
+                    and draw["to"]["event"] not in out:
+                out.append(draw["to"]["event"])
     return out
 
 
@@ -912,10 +916,11 @@ def transition_targets(t) -> list[str]:
             eto = ent.get("to") if isinstance(ent, dict) else None
             if isinstance(eto, str) and eto not in out:
                 out.append(eto)
-        draw = t.get("default")
-        if isinstance(draw, dict) and isinstance(draw.get("to"), str) \
-                and draw["to"] not in out:
-            out.append(draw["to"])
+        for key in ("default", "when_all_hidden"):     # =352
+            draw = t.get(key)
+            if isinstance(draw, dict) and isinstance(draw.get("to"), str) \
+                    and draw["to"] not in out:
+                out.append(draw["to"])
         return out
     if isinstance(to, str):
         out.append(to)

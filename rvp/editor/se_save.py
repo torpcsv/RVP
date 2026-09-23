@@ -251,10 +251,16 @@ class _ScenarioEditorSaveMixin:
             self.data["bgm_enabled"] = True
         else:
             self.data.pop("bgm_enabled", None)
+        # =347: 背景フラグ(省略=OFF)。ON=true明示 / OFF=キーを書かない
+        if self.background_enabled:
+            self.data["background_enabled"] = True
+        else:
+            self.data.pop("background_enabled", None)
         # トップレベルのキー順を title, detail, background, bgm_enabled,
         # device_enabled, start, events, その他 に整える(=262でbackground追加)
         ordered = {}
         for key in ("title", "detail", "background", "bgm_enabled",
+                    "background_enabled",
                     "device_enabled", "start", "events"):
             if key in self.data:
                 ordered[key] = self.data[key]

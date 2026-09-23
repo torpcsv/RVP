@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import customtkinter as ctk
+import os
 import time
 from .. import appfont, scenario_map
 from ..i18n import tr
@@ -35,10 +36,109 @@ class _RVPAppPlayPagesMixin:
             return ""
 
     def _update_page_lamp(self):
-        """バーランプを現在ページに合わせて点灯し直す(=89)。"""
+        """バーランプを現在ページに合わせて点灯し直す(=89)。
+
+        =350: 消灯中のセグメントだけ中央にアイコンを出す(点灯中は出さない)。
+        """
+        icons = getattr(self, "page_lamp_icons", ())
         for i, seg in enumerate(self.page_lamps):
-            seg.configure(bg=self.PAGE_LAMP_ON if i == self._play_page
-                          else self.PAGE_LAMP_OFF)
+            on = i == self._play_page
+            seg.configure(bg=self.PAGE_LAMP_ON if on else self.PAGE_LAMP_OFF)
+            icon = icons[i] if i < len(icons) else None
+            if icon is None:
+                continue
+            if on:
+                if icon.winfo_manager():
+                    icon.place_forget()
+            elif not icon.winfo_manager():
+                icon.place(relx=0.5, rely=0.5, anchor="center")
+
+    def _install_bg_solo(self):
+        """=351: 外周の余白の左クリックで「イラストのみ表示」へ入る(隠し機能)。
+
+        対象はユーザー指定の「白抜き以外」= ウィンドウの外周の余白・タブ
+        ボタンの右〜ヘッダー左の空き帯・ヘッダーのボタンの周り(Q3)。
+        つまり root / TabView / タブのパネル / 再生タブのフレーム / ヘッダーの
+        **地そのもの**だけで、その上の部品(ボタン・カード・遷移図・バー
+        ランプ・再生タブ内の wrap の隙間)は対象外。bind_all で全クリックを
+        受け、`e.widget` が地のウィジェット(CTkFrame は中の `_canvas` が
+        実体)のときだけ反応する。
+        戻す: 覆いの左クリック(BackgroundArt 側)・Esc(Q4)。
+        """
+        def plain(*ws):
+            out = set()
+            for w in ws:
+                if w is None:
+                    continue
+                out.add(str(w))
+                c = getattr(w, "_canvas", None)
+                if c is not None:
+                    out.add(str(c))
+            return out
+        tabs = getattr(self, "tabs", None)
+        self._bg_solo_targets = plain(
+            self.root, tabs, getattr(tabs, "panel", None),
+            getattr(self, "tab_play", None), getattr(self, "header", None))
+        # bind_all("all" タグ): root.bind だと、他所の root.unbind("<Button-1>",
+        # id)(Python 3.12 以前は同じシーケンスの束縛を全部消す)に巻き込まれる
+        self.root.bind_all("<Button-1>", self._on_bg_solo_click, add="+")
+        self.root.bind("<Escape>", self._on_bg_solo_escape, add="+")
+
+    def _on_bg_solo_click(self, e=None):
+        """=351: 余白クリックの判定(背景イラストを表示中のときだけ)。"""
+        try:
+            w = str(getattr(e, "widget", ""))
+        except Exception:
+            return
+        if w not in getattr(self, "_bg_solo_targets", ()):
+            return
+        art = getattr(self, "bg_art", None)
+        if art is None or art.solo or not art.can_solo():
+            return
+        art.enter_solo()
+
+    def _on_bg_solo_escape(self, _e=None):
+        """=351: Esc でも UI を戻す(Q4)。"""
+        art = getattr(self, "bg_art", None)
+        if art is not None and art.solo:
+            art.exit_solo()
+
+    def _load_page_lamp_icons(self) -> dict:
+        """=350: バーランプのアイコン(rvp/assets/page_icons/<ページID>.png)。
+
+        白+アルファの PNG(ユーザー制作の画像から切り出したもの)を読み、
+        {ページID: ImageTk.PhotoImage} を返す。高さ28pxのバーに合わせて
+        等倍で作ってあるので、CTk の拡大率(Windows の表示スケール)が
+        1 でなければ同じ比率で拡縮する。読めないページは辞書に入れない
+        (=アイコンなしのバーとして動く)。**参照は self に保持する**
+        (tk の画像は参照が切れると消える)。
+        """
+        out = {}
+        try:
+            from PIL import Image, ImageTk
+        except Exception:
+            logger.exception("page lamp icons: PIL unavailable")
+            return out
+        try:
+            from customtkinter import ScalingTracker
+            scale = float(ScalingTracker.get_widget_scaling(self.root))
+        except Exception:
+            scale = 1.0
+        base = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "assets", "page_icons")
+        for pid in self.PLAY_PAGE_ORDER:
+            path = os.path.join(base, pid + ".png")
+            try:
+                im = Image.open(path).convert("RGBA")
+                if abs(scale - 1.0) > 0.01:
+                    im = im.resize((max(1, round(im.width * scale)),
+                                    max(1, round(im.height * scale))),
+                                   Image.LANCZOS)
+                out[pid] = ImageTk.PhotoImage(im, master=self.root)
+            except Exception:
+                logger.exception("page lamp icon load failed: %s", path)
+        self._page_lamp_imgs = out
+        return out
 
     def _relayout_page_lamps(self):
         """表示中のページ数に合わせてバーの分割数を合わせる(=150)。

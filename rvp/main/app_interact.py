@@ -40,6 +40,13 @@ class _RVPAppInteractMixin:
         self.choice_head.pack(fill="x", pady=(6, 0))
         self.choice_grid.pack(fill="x", pady=(8, 0))
         self._pack_play_overlay(self.choice_card)
+        self._exit_bg_solo()      # =351 Q6: 選択肢を見逃さないよう UI を戻す
+
+    def _exit_bg_solo(self):
+        """=351: 「イラストのみ表示」中なら UI を戻す(選択肢・数値入力の出現時)。"""
+        art = getattr(self, "bg_art", None)
+        if art is not None:
+            art.exit_solo()
 
     def _hide_choice_card(self):
         self.choice_card.pack_forget()
@@ -142,6 +149,7 @@ class _RVPAppInteractMixin:
         self.input_entry.configure(state="normal")
         self.input_submit_btn.configure(state="normal")
         self._pack_play_overlay(self.input_card)
+        self._exit_bg_solo()      # =351 Q6: 数値入力も同じ(フォーカスより先に)
         self.input_entry.focus_set()
 
     def _hide_input_card(self):

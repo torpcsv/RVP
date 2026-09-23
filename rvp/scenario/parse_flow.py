@@ -12,7 +12,7 @@ from ..i18n import tr
 
 from .parse_channels import (check_script_channels, check_video_channels,
     parse_channel, parse_device, parse_seek_channel)
-from .parse_items import parse_bgm
+from .parse_items import parse_bgm, parse_node_background
 from .parse_vars import (_require_var, parse_cond_next, parse_conds,
     parse_numref, parse_ops)
 
@@ -83,8 +83,13 @@ def parse_choice(ctx, raw, where, state_mode: bool = False):
                 tr("{0}: choice[{1}] の label が空です").format(where, i))
         ops = parse_ops(ctx, ent.get("ops"),
                         tr("{0} choice[{1}]").format(where, i))
+        # =352: 表示条件(判定式の AND。cond/watch と同じ書式)
+        when = ()
+        if ent.get("when") is not None:
+            when = tuple(parse_conds(ctx, ent.get("when"),
+                                     tr("{0} choice[{1}] when").format(where, i)))
         entries.append(ChoiceEntry(label=label, to=to, ops=ops,
-                                   to_event=to_event))
+                                   to_event=to_event, when=when))
 
     on_timeout = parse_ops(ctx, raw.get("on_timeout"),
                            tr("{0} on_timeout").format(where))
@@ -135,12 +140,28 @@ def parse_choice(ctx, raw, where, state_mode: bool = False):
         raise ValueError(
             tr('{0}: skip は "default" か "stay" で指定してください').format(where))
 
+    # =352: 訪問済みの行き先を隠す / 全部隠れたときの行き先
+    hv = raw.get("hide_visited", False)
+    if not isinstance(hv, bool):
+        raise ValueError(
+            tr("{0}: hide_visited は true / false で指定してください").format(where))
+    ah_to, ah_event = None, False
+    ahraw = raw.get("when_all_hidden")
+    if ahraw is not None:
+        if not isinstance(ahraw, dict) or ahraw.get("to") is None:
+            raise ValueError(
+                tr('{0}: when_all_hidden は {{"to": ...}} で指定してください').format(where))
+        ah_to, ah_event = parse_choice_to(ctx, ahraw["to"],
+            tr("{0} when_all_hidden").format(where), state_mode)
+
     return ChoiceRule(entries=entries, timeout_ms=timeout_ms,
                       on_timeout=on_timeout,
                       default_mode=default_mode, default_to=default_to,
                       skip_stay=(skip_raw == "stay"),
                       show_mode=show_mode, show_ms=show_ms,
-                      default_to_event=default_to_event)
+                      default_to_event=default_to_event,
+                      hide_visited=hv, all_hidden_to=ah_to,
+                      all_hidden_to_event=ah_event, state_mode=state_mode)
 
 
 def parse_input(ctx, raw, where):
@@ -444,6 +465,7 @@ def parse_state(ctx, state_id, raw, where) -> EventState:
             on_start=on_start, on_end=on_end,
             seek_channel=seek_ch,
             bgm=parse_bgm(ctx, raw.get("bgm"), where),
+            background=parse_node_background(ctx, raw.get("background"), where),
         )
     # 動画ステートの device 既定は「担当なし」(チャンネルはデバイスを
     # 駆動しない=全種別が動画側)。明示指定した種別のみチャンネル駆動。
@@ -468,6 +490,7 @@ def parse_state(ctx, state_id, raw, where) -> EventState:
         on_start=on_start, on_end=on_end,
         seek_channel=seek_ch, video_channel=vcid,
         bgm=parse_bgm(ctx, raw.get("bgm"), where),
+            background=parse_node_background(ctx, raw.get("background"), where),
     )
 
 

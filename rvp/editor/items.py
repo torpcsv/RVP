@@ -460,6 +460,7 @@ class ItemRow(TrackRowsMixin, ctk.CTkFrame):
         # 行の使い回し時に変数の有無が変わりうるため、生成/表示は
         # _ensure_ops_btn() へ集約(_apply_item から毎回呼ぶ)。
         self.ops_btn = None
+        self.when_btn = None           # =349: 再生条件(n)。変数宣言時のみ
         self._ensure_ops_btn()
 
         # =164: アイテムレビュー(音声の試聴+スクリプトのグラフ)。
@@ -526,22 +527,24 @@ class ItemRow(TrackRowsMixin, ctk.CTkFrame):
         ctk.CTkLabel(self.range_row, text=tr("区間:"),
                      font=ctk.CTkFont(size=11), text_color=TEXT_MUTED
                      ).pack(side="left")
-        self.vstart_var = tk.StringVar(value="")
-        self.vstart_entry = ctk.CTkEntry(
-            self.range_row, width=56, height=24, textvariable=self.vstart_var,
-            font=ctk.CTkFont(size=11), placeholder_text=tr("先頭"))
-        self.vstart_entry.pack(side="left", padx=(4, 2))
+        # =348: 開始/終了は数値変数でも指定できる(VarRefField。変数が
+        # 宣言されていなければ従来どおりの数値欄だけ)
+        self.vstart_field = VarRefField(self.range_row, width=56,
+                                        placeholder=tr("先頭"))
+        self.vstart_field.pack(side="left", padx=(4, 2))
+        self.vstart_var = self.vstart_field.text_var
+        self.vstart_entry = self.vstart_field.entry
         ctk.CTkLabel(self.range_row, text=tr("秒"),
                      font=ctk.CTkFont(size=11), text_color=TEXT_MUTED
                      ).pack(side="left")
         ctk.CTkLabel(self.range_row, text="〜",
                      font=ctk.CTkFont(size=11), text_color=TEXT_MUTED
                      ).pack(side="left", padx=(4, 2))
-        self.vend_var = tk.StringVar(value="")
-        self.vend_entry = ctk.CTkEntry(
-            self.range_row, width=56, height=24, textvariable=self.vend_var,
-            font=ctk.CTkFont(size=11), placeholder_text=tr("末尾"))
-        self.vend_entry.pack(side="left", padx=(4, 2))
+        self.vend_field = VarRefField(self.range_row, width=56,
+                                      placeholder=tr("末尾"))
+        self.vend_field.pack(side="left", padx=(4, 2))
+        self.vend_var = self.vend_field.text_var
+        self.vend_entry = self.vend_field.entry
         # =67: 単位「秒」は**常に**出す(従来は説明文の頭に付いていたため、
         # compact な編集画面では終了欄に単位が無いように見えていた)
         ctk.CTkLabel(self.range_row, text=tr("秒"),
@@ -583,11 +586,22 @@ class ItemRow(TrackRowsMixin, ctk.CTkFrame):
         self.is_video = bool(self.video_rel)
         # =59: 区間はアイテム共通の "range" へ。旧形式(video辞書内の
         # start/end)は range が無いときだけ読む(保存し直すと range になる)。
-        r_start, r_end = _raw_range(self.orig)
+        _rr = self.orig.get("range") if isinstance(self.orig, dict) else None
+        _rr = _rr if isinstance(_rr, dict) else {}
+        # =348: 変数指定({"var": 名})はテキスト化せずフィールドへそのまま
+        _plain = {"range": {k: v for k, v in _rr.items()
+                            if not isinstance(v, dict)}}
+        r_start, r_end = _raw_range(_plain)
         if r_start or r_end:
             vstart, vend = r_start, r_end
-        self.vstart_var.set(vstart)
-        self.vend_var.set(vend)
+        if self.owner is not None and hasattr(self.owner, "_numeric_var_names"):
+            _names = self.owner._numeric_var_names()
+            self.vstart_field.set_names(_names)
+            self.vend_field.set_names(_names)
+        self.vstart_field.set(_rr["start"] if isinstance(_rr.get("start"), dict)
+                              else vstart)
+        self.vend_field.set(_rr["end"] if isinstance(_rr.get("end"), dict)
+                            else vend)
         # スクリプトのみアイテム(audio/videoなし+tracks/funscript明示)か。
         # スクリプト専用チャンネルの行。音声は再生せず、トラックの
         # スクリプト長ぶんデバイスを動かす。
@@ -841,6 +855,56 @@ class ItemRow(TrackRowsMixin, ctk.CTkFrame):
             self._update_ops_btn()
         else:
             self.ops_btn.pack_forget()
+        self._ensure_when_btn(has_vars)
+
+    def _ensure_when_btn(self, has_vars: bool):
+        """=349: 再生条件ボタン(変数宣言があるときだけ。行の使い回しに追従)。
+
+        条件が付いていると枠をアクセント色にする(=行の「条件」の印)。
+        """
+        if has_vars and self.when_btn is None:
+            self.when_btn = ctk.CTkButton(
+                self.head, text="", width=72 if self.compact else 80,
+                height=26, font=ctk.CTkFont(size=11),
+                fg_color="transparent", border_width=1, border_color=MUTED,
+                text_color=("gray20", "gray85"),
+                hover_color=("gray85", "gray28"), command=self._edit_when)
+        if self.when_btn is None:
+            return
+        if has_vars:
+            if not self.when_btn.winfo_ismapped():
+                self.when_btn.pack(side="right", padx=2,
+                                   before=self.audio_label)
+            self._update_when_btn()
+        else:
+            self.when_btn.pack_forget()
+
+    def _update_when_btn(self):
+        if self.when_btn:
+            n = len(self.orig.get("when") or [])
+            self.when_btn.configure(
+                text=tr("条件({0})").format(n),
+                border_color=_clr.ACCENT if n else MUTED,
+                border_width=2 if n else 1)
+
+    def _edit_when(self):
+        """=349: 再生条件ダイアログを開く。"""
+        from .dialogs import ItemWhenDialog
+        o = self.owner
+        dlg = ItemWhenDialog(
+            o, self._disp_name(), self.orig.get("when") or [],
+            o._var_names() if o is not None else [],
+            o._string_var_names() if o is not None else [])
+        o.wait_window(dlg)
+        if dlg.result is None:
+            return
+        if dlg.result:
+            self.orig["when"] = dlg.result
+        else:
+            self.orig.pop("when", None)
+        self._update_when_btn()
+        if hasattr(o, "_hist_check"):
+            o._hist_check()
 
     def _update_ops_btn(self):
         if self.ops_btn:
@@ -884,7 +948,7 @@ class ItemRow(TrackRowsMixin, ctk.CTkFrame):
         =59の規則(トラック個別 > アイテム)で解決して ms で渡す。
         """
         warn = []
-        lo, hi, _given, ok = _review_range_ms(self.vstart_var, self.vend_var)
+        lo, hi, _given, ok = _review_range_ms(*self._range_text_vars())
         if not ok:
             warn.append(tr("区間の指定が不正なので、素材全体を対象にします"))
         tracks = []
@@ -1049,9 +1113,18 @@ class ItemRow(TrackRowsMixin, ctk.CTkFrame):
 
     def _validate_range(self) -> str | None:
         """アイテムの区間欄(開始秒/終了秒)を検証する(=59で全種別が対象)。"""
+        sv, ev = self._range_text_vars()
         return _validate_range_fields(
-            self.vstart_var, self.vend_var, self.vstart_entry, self.vend_entry,
+            sv, ev, self.vstart_entry, self.vend_entry,
             self._disp_name(), self.owner)
+
+    def _range_text_vars(self):
+        """=348: 数値として扱う区間欄(変数指定の側は空欄扱い)。"""
+        empty = tk.StringVar(value="")
+        sv = empty if self.vstart_field.use_var else self.vstart_var
+        ev = tk.StringVar(value="") if self.vend_field.use_var \
+            else self.vend_var
+        return sv, ev
 
     def _mark_owner(self, widget):
         if self.owner is not None:
@@ -1079,7 +1152,12 @@ class ItemRow(TrackRowsMixin, ctk.CTkFrame):
         # 旧形式(video辞書内の start/end)はここで落とすので、開いて保存し直せば
         # 新形式に揃う。
         item.pop("range", None)
-        rng = _range_dict(self.vstart_var, self.vend_var)
+        rng = _range_dict(*self._range_text_vars()) or {}
+        # =348: 変数指定の側は {"var": 名} を書く
+        for key, fld in (("start", self.vstart_field),
+                         ("end", self.vend_field)):
+            if fld.use_var:
+                rng[key] = fld.get_raw()
         if rng:
             item["range"] = rng
         if self.is_video:

@@ -570,6 +570,7 @@ class _ScenarioEditorStatesMixin:
         self.seek_var.set(st.get("seek_channel")
                           or self._auto_seek_channel(channels))
         self._load_bgm(st.get("bgm"))   # =256
+        self._load_background(st.get("background"))   # =347
 
         # ステート開始時の変数操作(変数宣言があるときだけ表示)
         self._st_ops = list(st.get("on_start") or [])
@@ -838,6 +839,14 @@ class _ScenarioEditorStatesMixin:
             st["bgm"] = bgm
         else:
             st.pop("bgm", None)
+        # =347: 背景(引き継ぐ=キー省略 / オフ / 指定)
+        err, bg = self._collect_background(where)
+        if err:
+            return err
+        if bg is not None:
+            st["background"] = bg
+        else:
+            st.pop("background", None)
         if transition:
             st["transition"] = transition
         else:

@@ -65,6 +65,9 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
         # "state"=ステート移行の選択肢)。表示枠は1つなので、監視側は自分の
         # 持ち主の選択肢だけを解決する(他方の結果を誤って消費しない)。
         self._choice_owner = "event"
+        self._choice_vis = None                  # =352 表示中の番号(None=全件)
+        self._choice_rule = None                 # =352 表示中の選択肢ルール
+        self._choice_hidden_to = None            # =352 全部隠れたときの行き先
         self._choice_result_event = False   # 選択/既定の行き先がイベントか
         # =275: ステート移行の選択肢で「イベント宛て」が選ばれた=イベントを
         # 自然終了させてから飛ぶ遷移先。_play_event の自然終了フローで消費
@@ -176,6 +179,10 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
         self._bgm_active = False     # いま鳴っている(ログ「BGM停止」の要否)
         self._bgm_sounds = {}        # path -> Sound(同一シナリオ内キャッシュ)
         self._bgm_gen = 0            # 世代(フェード後掃除の取り違え防止)
+        # =347: 背景。UI へは state["bg_seq"](要求の通し番号)と
+        # state["bg_req"]=(BackgroundSpec|None, フェード秒) で渡す
+        # (_poll_state が番号の変化を見て BackgroundArt へ適用する)。
+        self._bg_cur = self._BG_UNSET
 
         self.state = {
             "status": "idle",
@@ -227,7 +234,35 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
             "video_file": "",         # 再生中の動画(動画chのあるときのみ)
             "video_channel": "",      # 動画チャンネルのID(=52。""=動画なし)
             "message": "",
+            "bg_seq": 0,
+            "bg_req": None,
         }
+
+    _BG_UNSET = object()
+
+    def _apply_background(self, nb) -> None:
+        """=347: ノード入場時の背景要求を state へ積む。
+
+        nb=None は「前の背景を引き継ぐ」。見た目が同じ(file と dim が同じ)
+        なら何もしない(フェードも走らせない。ユーザー確認)。
+        background_enabled=False のシナリオでは一切出さない。
+        """
+        if not bool(getattr(getattr(self, "scenario", None),
+                            "background_enabled", False)):
+            return
+        if nb is None:
+            if self._bg_cur is not self._BG_UNSET:
+                return
+            spec, fade = None, 0.0
+        else:
+            spec = nb.spec if nb.mode == "set" else None
+            fade = nb.fade
+        key = None if spec is None else (spec.file, spec.dim)
+        if self._bg_cur is not self._BG_UNSET and key == self._bg_cur:
+            return
+        self._bg_cur = key
+        self.state["bg_req"] = (spec, float(fade))
+        self.state["bg_seq"] = int(self.state.get("bg_seq", 0)) + 1
 
     async def play(self, scenario: Scenario) -> None:
         if self._playing:
@@ -235,6 +270,8 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
         self._playing = True
         self.scenario = scenario   # =252: デバイス連動フラグ等の参照用
         self._bgm_sounds = {}      # =256: BGMキャッシュはシナリオ単位で捨てる
+        self._bg_cur = self._BG_UNSET   # =347: 再生のたびに引き継ぐ背景なしから
+        self._item_snd_cache = None     # =348: 音声の使い回しはシナリオ単位
         self._stop_requested = False
         self._paused = False
         self.state["scenario_title"] = scenario.title
@@ -380,8 +417,16 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
           to    → 指定イベントへ
         """
         if event.next_choice:
-            # ▶▶スキップ等で選択を経ずに抜ける場合はデフォルト遷移先へ
-            return event.next_choice.pick_default()
+            # ▶▶スキップ等で選択を経ずに抜ける場合はデフォルト遷移先へ。
+            # =352: 表示の瞬間に全部隠れていたらその行き先、表示中なら表示中の
+            # 項目から、未表示ならこの瞬間の表示条件で決める
+            if self._choice_hidden_to is not None:
+                return self._choice_hidden_to
+            rule = event.next_choice
+            if self._choice_rule is rule:
+                return self._choice_default_info(rule)[0]
+            return rule.pick_default_visible(
+                self._choice_visible(rule, "event"))[0]
         if event.next_input:
             # ▶▶スキップ等で決定を経ずに抜ける場合は変数を変更せず遷移先へ
             return event.next_input.to
@@ -728,6 +773,7 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
 
         self._clear_choice()
         self._clear_input()
+        self._choice_hidden_to = None   # =352 イベントごとにやり直す
         choice_task = None
         if event.next_choice:
             choice_task = asyncio.ensure_future(
@@ -862,6 +908,7 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
         """
         self.state["state_id"] = st.state_id if event.is_multi_state else ""
         self.state["channel_audio"] = {}   # =286: ステート入場で表示をリセット
+        self._pos_src = None               # =348: 再生位置の元もノードごと
         if event.is_multi_state:
             # イベントログへ記録(通常イベントの内部"main"ステートは記録しない)
             label = st.state_id
@@ -878,6 +925,9 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
         # =256: BGMの適用(指定=先頭から再生し直し / 引き継ぐ=何もしない /
         # オフ=停止)。通常イベントは "main" ステートの入場がイベント入場。
         await self._apply_bgm(st.bgm)
+        # =347: 背景の適用(引き継ぐ=何もしない。ただし再生の最初のノードで
+        # 引き継ぐ背景が無ければ背景なし=Q5)
+        self._apply_background(st.background)
 
         # ステート滞在時間クロック(再入でゼロから。一時停止で他クロックと一括停止)
         state_clock = PlaybackClock()
@@ -898,6 +948,7 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
         self._sc_rule = sc_rule
         sc_shown = False
         sc_resolved = None      # (to, to_event) 選択/タイムアウトで確定
+        sc_hidden = None        # =352 表示の瞬間に全部隠れていた → 行き先
 
         # ステート内のチャンネル別統計(時間はインターバル込み、再入時ゼロから)
         stats = {ch_id: {"time_ms": 0.0, "count": 0} for ch_id in st.channels}
@@ -1110,12 +1161,17 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
                                     and state_clock.now_ms() >= sc_rule.show_ms)
                                 or (sc_rule.show_mode == "end" and not tasks))
                         if show and self.state["choice"] is None:
-                            self._show_choice(event, rule=sc_rule,
-                                              owner="state",
-                                              state_id=st.state_id)
+                            sc_hidden = self._show_choice(
+                                event, rule=sc_rule, owner="state",
+                                state_id=st.state_id)
                             sc_shown = True
                             # 待機=人の操作を挟むので連続通過カウンタを解除
                             self._silent_streak = 0
+                    if sc_hidden is not None and not tasks:
+                        # =352: 全部隠れていた選択肢。ステートの音声が鳴り
+                        # 終わったら(打ち切らずに)その行き先へ移行する
+                        sc_resolved = sc_hidden
+                        break
                     if sc_shown and self.state["choice"] is not None:
                         to = self._choice_resolution(sc_rule, owner="state")
                         if to is not None:
@@ -1259,6 +1315,9 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
         """
         cands, weights = [], []
         for item in items:
+            # =349: 再生条件が不成立なら候補から外す(重み0と同じ扱い)
+            if item.when and not item.when_ok(self.vars):
+                continue
             w = self.vars.get(item.weight_var) if item.weight_var \
                 else item.weight
             try:

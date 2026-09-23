@@ -124,6 +124,10 @@ class _ScenarioPlayerLogMixin:
                     else op.value
                 if op.value_var is not None:
                     refs.append(op.value_var)
+                if getattr(op, "source", None) == "position":
+                    # =348: 再生位置(シークバー追従チャンネルのファイル上の秒)
+                    value = self._playback_position_s()
+                    refs.append(tr("再生位置"))
                 if op.kind == "add":
                     detail = tr("加算 {0}").format(self._fmt_signed(value))
                     raw = self.vars[op.name] + value

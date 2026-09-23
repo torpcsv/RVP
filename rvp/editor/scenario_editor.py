@@ -15,6 +15,7 @@ from .dialogs import PlayOptionsDialog
 from .help import HelpDialog
 from .review import ItemReviewDialog
 from .se_bgm import _ScenarioEditorBgmMixin
+from .se_background import _ScenarioEditorBackgroundMixin
 from .se_correlation import _ScenarioEditorCorrelationMixin
 from .se_events import _ScenarioEditorEventsMixin
 from .se_history import _ScenarioEditorHistoryMixin
@@ -28,7 +29,7 @@ from . import common as _clr   # =301: テーマ追従する色定数は定義�
 from ._hooks import _pkg
 
 
-class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _ScenarioEditorHistoryMixin, _ScenarioEditorPanelMixin, _ScenarioEditorNextMixin, _ScenarioEditorCorrelationMixin, _ScenarioEditorStatesMixin, _ScenarioEditorEventsMixin, _ScenarioEditorBgmMixin, _ScenarioEditorSaveMixin, ctk.CTkToplevel):
+class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _ScenarioEditorHistoryMixin, _ScenarioEditorPanelMixin, _ScenarioEditorNextMixin, _ScenarioEditorCorrelationMixin, _ScenarioEditorStatesMixin, _ScenarioEditorEventsMixin, _ScenarioEditorBgmMixin, _ScenarioEditorBackgroundMixin, _ScenarioEditorSaveMixin, ctk.CTkToplevel):
     """シナリオ編集ウィンドウ。"""
 
     EV_END_CHOICES = (tr("合計N秒で次へ"), tr("合計N回の再生で次へ"), tr("N回のステート移行で次へ"))
@@ -117,6 +118,13 @@ class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _Sce
 
     BGM_OFF = tr("BGMオフ")
 
+    # =347: 背景の3択(BGMと同じ作法)。既定は「引き継ぐ」= JSONキー省略
+    BG_INHERIT = tr("前の背景を引き継ぐ")
+
+    BG_SET = tr("背景を指定")
+
+    BG_OFF = tr("背景オフ")
+
     def __init__(self, master, path: str | None, on_saved=None,
                  review_host=None):
         super().__init__(master)
@@ -168,6 +176,11 @@ class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _Sce
         # (BGMを持つ旧シナリオは存在しないため device_enabled とは逆の既定)。
         # OFFはBGMブロックを隠すだけで、各ノードの "bgm" 定義は保持される。
         self.bgm_enabled = bool(self.data.get("bgm_enabled", False))
+        # =347: 旧形式のトップレベル background は開始ノードへ移し、背景機能
+        # フラグ(JSONトップレベル "background_enabled"・省略=OFF)を立てる
+        self._migrate_top_background(self.data)
+        self.background_enabled = bool(
+            self.data.get("background_enabled", False))
         # =250: 紹介文(旧・説明欄)。常設テキストボックスを廃止し、ダイアログ
         # 経由でこの変数に保持する。ファイルへは _do_save で書き出す。
         self._detail_text = str(self.data.get("detail", "") or "")
@@ -187,6 +200,7 @@ class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _Sce
         self._build_ui()
         self._apply_device_enabled()   # =252: OFFで開いたシナリオへ即反映
         self._apply_bgm_enabled()      # =256: 同上(BGM)
+        self._apply_background_enabled()   # =347: 同上(背景)
         self._init_map_toggle()
         self._init_map_undock()        # =300
         self._redraw_canvas()
@@ -456,6 +470,14 @@ class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _Sce
             text_color=("gray20", "gray85"), hover_color=("gray85", "gray25"),
             command=self._open_background_dialog)
         self.bg_btn.pack(side="right", padx=4)
+        # =347: 背景トグル(BGMトグルの右隣・「再生オプション」の左。
+        # ユーザー決定 Q6)。背景の指定はノードごとのブロックで行う
+        self.bg_toggle_btn = ctk.CTkButton(
+            head_bar, text=self._bg_btn_text(), width=100, height=30,
+            fg_color="transparent", border_width=1, border_color=MUTED,
+            text_color=("gray20", "gray85"), hover_color=("gray85", "gray25"),
+            command=self._toggle_background_enabled)
+        self.bg_toggle_btn.pack(side="right", padx=4)
         # =256: BGMトグル(「変数/監視」の左隣)。デバイス連動の右隣にあった
         # 区切り線(旧head_sep1)は廃止(ユーザー指定=トグル2つ+設定系を
         # 同じグループにする)。
@@ -603,14 +625,6 @@ class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _Sce
             self.data.pop("event_map", None)
         else:
             self.data["event_map"] = emap
-        bg = dlg.result.get("background")
-        if bg is None:
-            self.data.pop("background", None)
-        else:
-            # 相対で保持されていた既存パスと同様、self.data は base_dir
-            # 基準。ダイアログは絶対パスを返すのでそのまま格納してよい
-            # (_rebase_scenario_path が isabs を処理する)。
-            self.data["background"] = bg
 
     def refresh_theme(self):
         """=151: メイン画面でテーマが切り替わったときに呼ばれる。

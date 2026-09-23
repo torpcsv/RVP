@@ -272,6 +272,7 @@ class _ScenarioEditorEventsMixin:
                 ev.get("device"), ev.get("channels", {}),
                 has_video=_raw_has_video(ev.get("channels")))
             self._load_bgm(ev.get("bgm"))   # =256
+            self._load_background(ev.get("background"))   # =347
             channels = ev.get("channels", {})
             # イベント終了条件(全ch終了 / 指定ch終了 / 合計時間)。「委譲」は
             # ステート形式専用なので通常イベントの選択肢には出さない(相関制御)。
@@ -355,6 +356,7 @@ class _ScenarioEditorEventsMixin:
             # =256: ステート形式では bgm は各ステートの持ち物(イベント直下は
             # 読み込みエラーになる書式なので、残っていれば落とす)
             ev.pop("bgm", None)
+            ev.pop("background", None)      # =347: 同上(背景)
             # イベント終了条件(UIで表せない変数指定は元の値をそのまま保持)
             if not getattr(self, "ev_end_locked", False):
                 choice = self.ev_end_var.get()
@@ -571,6 +573,14 @@ class _ScenarioEditorEventsMixin:
             ev["bgm"] = bgm
         else:
             ev.pop("bgm", None)
+        # =347: 背景(引き継ぐ=キー省略 / オフ / 指定)
+        err, bg = self._collect_background(tr('イベント {0}').format(ev_id))
+        if err:
+            return err
+        if bg is not None:
+            ev["background"] = bg
+        else:
+            ev.pop("background", None)
         if self.evend_var.get() == self.EVEND_INFINITE:
             ev["end"] = {"type": "none"}   # =168
         elif end_channel is not None:

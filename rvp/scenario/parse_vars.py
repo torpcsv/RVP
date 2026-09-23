@@ -134,6 +134,18 @@ def parse_ops(ctx, raw, where) -> tuple:
             continue
         if "value" not in o:
             raise ValueError(tr("{0}: value が必要です").format(w))
+        if kind == "set" and isinstance(o["value"], dict) \
+                and "position" in o["value"]:
+            # =348: 再生位置(シークバー追従チャンネルのファイル上の秒)を代入
+            if o["value"].get("position") is not True or len(o["value"]) != 1:
+                raise ValueError(
+                    tr('{0}: 再生位置は {{"position": true}} で指定してください').format(w))
+            if not target.is_number:
+                raise ValueError(
+                    tr("{0}: 再生位置は数値変数にのみ代入できます").format(w))
+            ops.append(VarOp(kind="set", name=target.name,
+                             source="position"))
+            continue
         const, var_name, rhs_num = _parse_rhs(ctx, o["value"], w)
         if kind in ("add", "mul"):
             # =75: mul(乗算)は add と同じ制約(数値変数×数値のみ)

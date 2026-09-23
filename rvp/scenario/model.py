@@ -54,11 +54,23 @@ class EventItem:
     # トラック(funscript/CSV)は既定でこの区間に連動する(=59・ユーザー決定)。
     start_s: float = 0.0          # 区間の開始秒(0=素材の先頭)
     end_s: float | None = None    # 区間の終了秒(None=素材の末尾まで)
+    # =348: 区間の開始/終了を数値変数で指定({"var": 名})。再生直前に
+    # 解決して start_s/end_s を差し替えたコピーで鳴らす(_resolve_item_range)
+    start_var: str | None = None
+    end_var: str | None = None
+    # =349: 再生条件(AND の判定式タプル。空=無条件)。抽選/順番のたびに
+    # 評価し、不成立のアイテムは候補から外す(重み0と同じ扱い)
+    when: tuple = ()
+
+    def when_ok(self, vars_) -> bool:
+        """=349: 再生条件が成立しているか(条件なし=常に True)。"""
+        return all(c.eval(vars_) for c in self.when)
 
     @property
     def has_range(self) -> bool:
         """区間指定があるか(先頭以外から始まる、または終端が指定されている)。"""
-        return self.start_s > 0 or self.end_s is not None
+        return (self.start_s > 0 or self.end_s is not None
+                or self.start_var is not None or self.end_var is not None)
 
     # --- 後方互換アクセサ(=51〜=58 の呼び出し側が video_* を使っていた) ---
     @property
@@ -301,6 +313,29 @@ class BackgroundSpec:
 
 
 @dataclass
+class NodeBackground:
+    """=347: ノード(イベント/ステート)の背景指定(ノード直下 "background")。
+
+    JSON:
+      (キー省略)                                  = 前の背景を引き継ぐ(None)
+      "background": {"off": true, "fade": 0.5}     = 背景オフ
+      "background": {"file": "bg.png", "dim": 40, "fade": 0.5} = 背景を指定
+    fade は切り替えにかける秒数(0=即時・省略=0.5・0〜10)。同じ画像
+    (file と dim が同じ)への切り替えは何もしない(ユーザー確認)。
+    トップレベルの background_enabled が false のシナリオでは表示しない。
+    """
+    mode: str                                   # "set" / "off"
+    spec: "BackgroundSpec | None" = None        # mode=="set" のとき
+    fade: float = 0.5
+
+    def key(self):
+        """見た目の同一判定用(None=背景なし)。"""
+        if self.mode != "set" or self.spec is None:
+            return None
+        return (self.spec.file, self.spec.dim)
+
+
+@dataclass
 class EventMapSpec:
     """=343: 再生タブのイベント遷移図のネタバレ防止(トップレベル "event_map")。
 
@@ -522,6 +557,8 @@ class EventState:
     # 通常イベントではJSONのイベント直下 "bgm" を "main" ステートへ流し込む
     # (playerはステート入場で一元的に適用する)。
     bgm: "BgmSpec | None" = None
+    # =347: 背景指定。None=「前の背景を引き継ぐ」(BGMと同じ作法)
+    background: "NodeBackground | None" = None
     # 動画(外部mpvで再生。PLAN_VIDEO.md)。フェーズ3-B(=52)で
     # 「イベント/ステート直下の video」から「動画アイテムを持つチャンネル」へ
     # 移行した。旧形式のJSONは migrate_video_node が読み込み時に変換する。
@@ -675,6 +712,9 @@ class VarOp:
     value2: object = None
     value2_var: str | None = None
     cond: object = None            # =126 eval用(VarCond)
+    # =348: set の右辺を実行時の値から取る。"position"=シークバー追従
+    # チャンネルの再生位置(ファイル上の秒。区間の開始秒を含む)
+    source: str | None = None
 
 
 @dataclass
@@ -735,6 +775,8 @@ class ChoiceEntry(NamedTuple):
     to: str
     ops: tuple = ()
     to_event: bool = False
+    # =352: 表示条件(判定式の AND)。空=常に表示。選択肢を表示する瞬間に評価
+    when: tuple = ()
 
 
 @dataclass
@@ -783,6 +825,70 @@ class ChoiceRule:
     show_ms: int = 0
     # =275: ステート移行の選択肢で default_mode="to" の行き先がイベントか
     default_to_event: bool = False
+    # =352: 項目ごとの表示制御。hide_visited=行き先が訪問済みの項目を隠す。
+    # all_hidden_to=全項目が隠れたときの行き先(None=default の規則に従う)。
+    # state_mode=ステート移行の選択肢か(訪問済みの判定で行き先の種類を知るため)
+    hide_visited: bool = False
+    all_hidden_to: str | None = None
+    all_hidden_to_event: bool = False
+    state_mode: bool = False
+
+    def entry_visible(self, e, vars_, visited_events=(),
+                      visited_states=()) -> bool:
+        """=352: 選択肢1件を表示するか(表示条件 when と 訪問済みで隠す)。
+
+        訪問済みの判定: 行き先がイベント(イベントの next、またはステート移行の
+        {"event"})なら「このシナリオ再生中に入ったイベント」、ステートなら
+        「このイベント実行中に通ったステート」(どちらも既存の履歴)。
+        """
+        if e.when and not all(c.eval(vars_) for c in e.when):
+            return False
+        if self.hide_visited:
+            is_event = (not self.state_mode) or e.to_event
+            seen = visited_events if is_event else visited_states
+            if e.to in seen:
+                return False
+        return True
+
+    def visible_indices(self, vars_, visited_events=(),
+                        visited_states=()) -> list:
+        """=352: 表示する選択肢の番号(元の並び順)。"""
+        return [i for i, e in enumerate(self.entries)
+                if self.entry_visible(e, vars_, visited_events,
+                                      visited_states)]
+
+    @property
+    def has_visibility(self) -> bool:
+        """=352: 表示制御があるか(無ければ従来どおり全件表示)。"""
+        return self.hide_visited or any(e.when for e in self.entries)
+
+    def pick_default_visible(self, visible) -> tuple:
+        """=352: 表示中の項目だけで既定の行き先を (to, to_event) で決める。
+
+        visible=表示する番号のリスト(None=全件=従来どおり)。
+        - 全部隠れた: all_hidden_to があればそこ、無ければ従来の規則(全件)
+        - random: 表示中から等確率 / first: 表示中の先頭
+        - to: 行き先が「隠れた項目の行き先」(表示中の項目には無い)なら
+          表示中の先頭へ。選択肢に無い行き先はそのまま
+        """
+        if visible is None:
+            return self.pick_default_info()
+        ents = [self.entries[i] for i in visible]
+        if not ents:
+            if self.all_hidden_to:
+                return self.all_hidden_to, self.all_hidden_to_event
+            return self.pick_default_info()
+        if self.default_mode == "random":
+            import random as _r
+            e = _r.choice(ents)
+            return e.to, e.to_event
+        if self.default_mode == "to" and self.default_to:
+            key = (self.default_to, self.default_to_event)
+            in_all = any((e.to, e.to_event) == key for e in self.entries)
+            in_vis = any((e.to, e.to_event) == key for e in ents)
+            if not in_all or in_vis:
+                return self.default_to, self.default_to_event
+        return ents[0].to, ents[0].to_event
 
     def pick_default(self) -> str | None:
         """デフォルト遷移先を決める(タイムアウト/▶▶スキップ共通)。"""
@@ -811,6 +917,8 @@ class ChoiceRule:
         if self.default_mode == "to" and self.default_to \
                 and not self.default_to_event:
             out.append(self.default_to)
+        if self.all_hidden_to and not self.all_hidden_to_event:   # =352
+            out.append(self.all_hidden_to)
         return list(dict.fromkeys(out))
 
     @property
@@ -820,6 +928,8 @@ class ChoiceRule:
         if self.default_mode == "to" and self.default_to \
                 and self.default_to_event:
             out.append(self.default_to)
+        if self.all_hidden_to and self.all_hidden_to_event:       # =352
+            out.append(self.all_hidden_to)
         return list(dict.fromkeys(out))
 
 

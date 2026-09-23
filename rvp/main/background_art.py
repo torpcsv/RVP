@@ -88,7 +88,11 @@ class BackgroundArt:
         self._x0 = 0
         self._rebuild_job = None
         self._fade_jobs = {}              # win -> after id
+        self._fade_ms = None              # =347: 次の表示/非表示フェードの長さ
+        self._xf_job = None               # =347: クロスフェードの after id
+        self._xf_img = None               # =347: いま見えている合成フレーム
         self._hwnd = None                 # 画像窓のWin32ハンドル(=266)
+        self._solo = None                 # =351 イラストのみ表示の覆い(tk.Canvas)
         try:
             root.bind("<Configure>", self._on_root_configure, add="+")
             root.bind("<Map>", self._on_root_map, add="+")
@@ -104,6 +108,137 @@ class BackgroundArt:
         """シナリオ読み込み時に呼ぶ(spec=BackgroundSpec|None)。"""
         self.spec = spec
         self._apply()
+
+    XF_INTERVAL_MS = 60                   # =347: クロスフェードの1コマ
+
+    def set_node(self, spec, fade: float = 0.5) -> None:
+        """=347: ノード入場で背景を切り替える(spec=BackgroundSpec|None)。
+
+        同じ見た目(file と dim が同じ)なら何もしない。fade 秒かけて、
+        画像→画像はクロスフェード(旧新の合成を差し替え+alpha の補間)、
+        なし→画像/画像→なしは窓の alpha のフェードで切り替える。
+        途中で次の要求が来たら、いま見えているフレームから引き継ぐ。
+        """
+        def key(sp):
+            return None if sp is None else (sp.file, sp.dim)
+        if key(spec) == key(self.spec):
+            return
+        ms = max(0, int(round(float(fade or 0) * 1000)))
+        old_shown = self.shown
+        from_img = self._current_frame() if old_shown else None
+        from_alpha = self._current_img_alpha() if old_shown else 0.0
+        self._cancel_xfade()
+        self.spec = spec
+        if ms <= 0:
+            self._apply()
+            return
+        if not old_shown or spec is None or from_img is None:
+            # なし→画像 / 画像→なし: alpha のフェード(長さだけ変える)
+            self._fade_ms = ms
+            try:
+                self._apply()
+            finally:
+                self._fade_ms = None
+            return
+        if not self._want_shown() or not self._load_source():
+            self._apply()
+            return
+        to_img = self._compose(self._src)
+        if to_img is None or to_img.size != from_img.size:
+            self._apply()
+            return
+        self._start_xfade(from_img, from_alpha, to_img, self._img_alpha(), ms)
+
+    def _current_img_alpha(self) -> float:
+        """いまの画像側 alpha(underlay は 1-root の alpha)。"""
+        try:
+            if self.mode == "underlay":
+                return 1.0 - float(self.root.attributes("-alpha"))
+            if self._under is not None:
+                return float(self._under.attributes("-alpha"))
+        except (tk.TclError, ValueError):
+            pass
+        return self._img_alpha()
+
+    def _compose(self, src):
+        """src(dim 焼き込み済み原寸)を窓の大きさの1枚絵にする(黒帯込み)。"""
+        if src is None:
+            return None
+        try:
+            w = max(2, self.root.winfo_width())
+            h = max(2, self.root.winfo_height())
+            x0, sw, sh = bg_fit_geometry(w, h, src.width, src.height)
+            canvas = PILImage.new("RGB", (w, h), (0, 0, 0))
+            canvas.paste(src.resize((sw, sh), PILImage.Resampling.BILINEAR),
+                         (x0, 0))
+            return canvas
+        except Exception:
+            return None
+
+    def _current_frame(self):
+        """いま見えている絵(クロスフェード中はその途中のコマ)。"""
+        if self._xf_img is not None:
+            return self._xf_img
+        return self._compose(self._src)
+
+    def _cancel_xfade(self) -> None:
+        if self._xf_job is not None:
+            try:
+                self.root.after_cancel(self._xf_job)
+            except Exception:
+                pass
+        self._xf_job = None
+        self._xf_img = None
+
+    def _set_img_alpha_now(self, a: float) -> None:
+        if self._under is None:
+            return
+        if self.mode == "underlay":
+            self._set_win_alpha(self.root, round(1.0 - a, 3))
+        else:
+            self._set_win_alpha(self._under, a)
+
+    def _start_xfade(self, a_img, a_alpha, b_img, b_alpha, ms) -> None:
+        """=347: 旧→新のクロスフェード(XF_INTERVAL_MS ごとに合成を差し替え)。"""
+        for win in list(self._fade_jobs):          # alpha フェードは止める
+            try:
+                win.after_cancel(self._fade_jobs.pop(win))
+            except Exception:
+                pass
+        n = max(2, int(round(ms / float(self.XF_INTERVAL_MS))))
+
+        def step(i):
+            self._xf_job = None
+            if not self.shown or self._canvas is None:
+                self._xf_img = None
+                return
+            t = i / float(n)
+            try:
+                img = b_img if i >= n else PILImage.blend(a_img, b_img, t)
+                photo = PILImageTk.PhotoImage(img)
+                self._canvas.delete("all")
+                self._img_item = self._canvas.create_image(
+                    0, 0, anchor="nw", image=photo)
+                self._xf_photo = photo            # 参照を保持
+                self._xf_img = img
+                self._mirror_solo()               # =351
+            except Exception:
+                i = n
+            self._set_img_alpha_now(a_alpha + (b_alpha - a_alpha) * t)
+            if i >= n:
+                # 通常の描画(拡縮キャッシュ+x0)へ戻す
+                self._xf_img = None
+                self._drawn = None
+                self._photo_h = 0
+                self._rebuild()
+                return
+            try:
+                self._xf_job = self.root.after(self.XF_INTERVAL_MS,
+                                               lambda: step(i + 1))
+            except Exception:
+                self._xf_img = None
+
+        step(1)
 
     def set_user_enabled(self, flag: bool) -> None:
         """アプリ設定(表示ON/OFF)の反映。"""
@@ -125,7 +260,87 @@ class BackgroundArt:
         """タブ切替時に呼ぶ(再生タブ以外では表示しない=Q1)。"""
         self._apply()
 
-    def _img_alpha(self) -> float:
+    # ---------------- =351 イラストのみ表示 ----------------
+    # 再生タブの外周の余白をクリックすると UI を隠してイラストだけを見せる
+    # (ユーザー依頼・隠し機能)。root のクライアント領域全体を黒い
+    # キャンバス(覆い)で塞ぎ、そこへ**画像窓と同じ絵を同じ位置に**描く。
+    # overlay 方式: 画像(alpha a)×a + 覆いの同じ画像×(1-a) = 画像そのもの
+    # underlay 方式: 覆い(root alpha r)×r + 下の画像×(1-r) = 画像そのもの
+    # =どちらの方式でも**透け具合に関係なく不透明100%**になる(ユーザー決定
+    # Q1=B)。画像窓の alpha には一切触らないので、戻すときは覆いを外すだけ。
+    # 下地(黒帯)は黒(Q2)。覆いはクリックを受けて元へ戻す(Q4)。
+
+    @property
+    def solo(self) -> bool:
+        """イラストのみ表示中か(=351)。"""
+        return self._solo is not None
+
+    def can_solo(self) -> bool:
+        """=351: いまイラストのみ表示へ入れるか(背景を表示中で絵がある)。"""
+        return bool(self.shown and self._under is not None
+                    and (self._photo is not None or self._xf_img is not None))
+
+    def enter_solo(self, on_exit=None) -> bool:
+        """=351: UI を覆ってイラストだけを見せる。入れたら True。"""
+        if self.solo:
+            return True
+        if not self.can_solo():
+            return False
+        try:
+            cover = tk.Canvas(self.root, bd=0, highlightthickness=0,
+                              bg="black")
+            cover.place(x=0, y=0, relwidth=1.0, relheight=1.0)
+            # tk.Canvas は tkraise を図形の操作に上書きしているので、
+            # ウィジェットの重ね順は tk.Misc の方で上げる(§6 の罠)
+            tk.Misc.tkraise(cover)
+        except tk.TclError:
+            return False
+        self._solo = cover
+        self._solo_on_exit = on_exit
+        cover.bind("<Button-1>", lambda _e: self.exit_solo())
+        try:
+            # 入力欄にフォーカスが残っていると Space 等が文字として入るので
+            # 覆いへ移す(root の <space>/<Escape> は bindtags で届く=Q5)
+            cover.focus_set()
+        except tk.TclError:
+            pass
+        self._mirror_solo()
+        return True
+
+    def exit_solo(self) -> None:
+        """=351: イラストのみ表示をやめて UI を戻す(表示中でなければ何もしない)。"""
+        cover = self._solo
+        if cover is None:
+            return
+        self._solo = None
+        try:
+            cover.destroy()
+        except tk.TclError:
+            pass
+        cb = getattr(self, "_solo_on_exit", None)
+        self._solo_on_exit = None
+        if callable(cb):
+            try:
+                cb()
+            except Exception:
+                logging.getLogger(__name__).exception("solo exit callback")
+
+    def _mirror_solo(self) -> None:
+        """=351: 覆いへ画像窓と同じ絵を描く(描画のたびに呼ぶ)。"""
+        c = self._solo
+        if c is None:
+            return
+        try:
+            c.delete("all")
+            xf = getattr(self, "_xf_photo", None)
+            if self._xf_img is not None and xf is not None:
+                c.create_image(0, 0, anchor="nw", image=xf)
+            elif self._photo is not None:
+                c.create_image(self._x0, 0, anchor="nw", image=self._photo)
+        except tk.TclError:
+            pass
+
+    def _img_alpha(self, dim=None) -> float:
         """画像側のalpha。基準=1-UI不透明度(弱0.12/中0.24/強0.38)。
 
         =269: シナリオのdimが40未満のときは、dim=0で IMG_ALPHA_DIM0
@@ -133,7 +348,8 @@ class BackgroundArt:
         画像の主張を強くしたい」ユーザー要望)。dim>=40は従来どおり。
         """
         base = round(1.0 - self.ALPHA_LEVELS[self.alpha_level], 2)
-        dim = self.spec.dim if self.spec is not None else 40
+        if dim is None:
+            dim = self.spec.dim if self.spec is not None else 40
         if dim >= 40:
             return base
         t = (40 - max(0, dim)) / 40.0
@@ -378,8 +594,12 @@ class BackgroundArt:
             self._sync()
 
     def _hide(self) -> None:
+        # =351 Q7: 背景が消える(背景オフのノード・シナリオを閉じる・設定で
+        # 非表示・タブ切替)ときは、何もない画面を残さないよう UI を戻す
+        self.exit_solo()
         if not self.shown:
             return
+        self._cancel_xfade()
         self.shown = False
         if self.mode == "overlay":
             # rootは元から触っていない。画像側を消すだけ。
@@ -408,6 +628,9 @@ class BackgroundArt:
         except (tk.TclError, ValueError):
             cur = 1.0
         steps = self.FADE_STEPS
+        if self._fade_ms:                 # =347: ノードの切り替えは指定秒数
+            steps = max(1, int(round(self._fade_ms / float(
+                self.FADE_INTERVAL_MS))))
         if abs(cur - target) < 0.01:
             self._set_win_alpha(win, target)
             if done is not None:
@@ -568,6 +791,10 @@ class BackgroundArt:
 
     def _rebuild(self) -> None:
         self._rebuild_job = None
+        if self._xf_job is not None:      # =347: リサイズ等はフェードを打ち切る
+            self._cancel_xfade()
+            self._drawn = None
+            self._set_img_alpha_now(self._img_alpha())
         if not self.shown or self._src is None:
             return
         h = self.root.winfo_height()
@@ -612,3 +839,4 @@ class BackgroundArt:
             self._drawn = key
         except tk.TclError:
             pass
+        self._mirror_solo()                   # =351 覆いも同じ絵・位置へ

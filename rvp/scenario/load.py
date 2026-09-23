@@ -20,7 +20,7 @@ from .parse_channels import (check_script_channels, check_video_channels,
     has_content_channels, parse_channel, parse_device, parse_end,
     parse_event_duration_range, parse_seek_channel)
 from .parse_flow import parse_event_end, parse_next, parse_state
-from .parse_items import parse_bgm, resolve
+from .parse_items import parse_bgm, parse_node_background, resolve
 from .parse_vars import (parse_conds, parse_numref, parse_ops, parse_vars,
     parse_watch)
 
@@ -53,6 +53,14 @@ class _ScenarioLoadMixin:
         if not isinstance(bgm_enabled, bool):
             raise ValueError(
                 tr("bgm_enabled は true/false で指定してください"))
+
+        # =347: 背景機能フラグ(省略=False)。ただし旧形式のトップレベル
+        # background を持つシナリオは、省略時 ON として読む(ユーザー決定)
+        background_enabled = data.get("background_enabled",
+                                      data.get("background") is not None)
+        if not isinstance(background_enabled, bool):
+            raise ValueError(
+                tr("background_enabled は true/false で指定してください"))
 
         # =299: イベント図の配置モード(表示専用)。省略=auto
         map_mode = data.get("map_mode", "auto")
@@ -152,6 +160,10 @@ class _ScenarioLoadMixin:
                     if raw.get("video") is not None:
                         raise ValueError(
                             tr('{0}: ステート形式では video は各ステートに指定してください').format(where))
+                    if raw.get("background") is not None:
+                        # =347: 背景も BGM と同じく各ステートの持ち物
+                        raise ValueError(
+                            tr('{0}: ステート形式では background は各ステートに指定してください').format(where))
                     if raw.get("bgm") is not None:
                         # =256: BGMもチャンネルと同じく各ステートの持ち物
                         raise ValueError(
@@ -281,7 +293,8 @@ class _ScenarioLoadMixin:
                             # =290: 音声なしイベントも bgm(指定/引き継ぐ/オフ)を
                             # 持てる。従来は読み落としていて、選択肢だけの
                             # イベントで「BGMオフ」が効かなかった(ユーザー報告)
-                            bgm=parse_bgm(ctx, raw.get("bgm"), where))
+                            bgm=parse_bgm(ctx, raw.get("bgm"), where),
+            background=parse_node_background(ctx, raw.get("background"), where))
                         events[event_id] = ScenarioEvent(
                             event_id=event_id,
                             states={"main": state}, start_state="main",
@@ -395,7 +408,8 @@ class _ScenarioLoadMixin:
                         seek_channel=parse_seek_channel(ctx,
                             raw.get("seek_channel"), channels, where),
                         video_channel=vcid,
-                        bgm=parse_bgm(ctx, raw.get("bgm"), where))
+                        bgm=parse_bgm(ctx, raw.get("bgm"), where),
+            background=parse_node_background(ctx, raw.get("background"), where))
                     events[event_id] = ScenarioEvent(
                         event_id=event_id,
                         states={"main": state}, start_state="main",
@@ -418,7 +432,8 @@ class _ScenarioLoadMixin:
                     state = EventState(
                         state_id="main", channels={CH_CENTER: ch},
                         device_map={t: CH_CENTER for t in VALID_TRACK_TYPES},
-                        bgm=parse_bgm(ctx, raw.get("bgm"), where))
+                        bgm=parse_bgm(ctx, raw.get("bgm"), where),
+            background=parse_node_background(ctx, raw.get("background"), where))
                     events[event_id] = ScenarioEvent(
                         event_id=event_id,
                         states={"main": state}, start_state="main",
@@ -511,6 +526,8 @@ class _ScenarioLoadMixin:
                     targets += [e.to for e in ev.next_choice.entries]
                     if ev.next_choice.default_to:
                         targets.append(ev.next_choice.default_to)
+                    if ev.next_choice.all_hidden_to:        # =352
+                        targets.append(ev.next_choice.all_hidden_to)
                 if ev.next_cond:
                     targets += [to for _conds, to in ev.next_cond.rows]
                     if ev.next_cond.else_to:
@@ -538,6 +555,12 @@ class _ScenarioLoadMixin:
                             tr("イベント '{0}': ステート移行に選択肢があるときは、イベント側の選択肢/数値入力の表示タイミングは「イベント終了条件の達成時」のみ使えます").format(ev.event_id))
             for st in ev.states.values():
               # =256: BGMアイテムの存在チェック(通常アイテムと同じ扱い)
+              # =347: ノードの背景画像の存在チェック
+              if st.background is not None and st.background.spec is not None \
+                      and not os.path.exists(st.background.spec.file):
+                  errors.append(
+                      tr("背景画像ファイルが見つかりません: {0}").format(
+                          st.background.spec.file))
               if st.bgm is not None:
                   for it in st.bgm.items:
                       if not os.path.exists(it.audio):
@@ -624,6 +647,18 @@ class _ScenarioLoadMixin:
         if errors:
             raise ValueError(tr("シナリオファイルにエラーがあります:\n") + "\n".join(errors))
 
+        # =347: 旧形式のトップレベル background は「開始ノード(開始イベントの
+        # 開始ステート)の背景を指定」として扱う(ユーザー決定 Q1)。開始ノード
+        # 側に指定があればそちらを優先する。編集画面は保存時に移し替える。
+        if background is not None and start in events:
+            _ev0 = events[start]
+            _st0 = _ev0.states.get(_ev0.start_state)
+            if _st0 is not None and _st0.background is None:
+                from .model import NodeBackground
+                from .parse_items import BG_FADE_DEFAULT
+                _st0.background = NodeBackground(
+                    mode="set", spec=background, fade=BG_FADE_DEFAULT)
+
         return cls(
             title=data.get("title", os.path.basename(path)),
             detail=str(data.get("detail", "") or ""),
@@ -635,6 +670,7 @@ class _ScenarioLoadMixin:
             load_warnings=load_warnings,
             device_enabled=device_enabled,
             bgm_enabled=bgm_enabled,
+            background_enabled=background_enabled,
             background=background,
             event_map=event_map,
         )

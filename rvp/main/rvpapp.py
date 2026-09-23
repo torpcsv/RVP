@@ -159,6 +159,11 @@ class RVPApp(_RVPAppHeaderMixin, _RVPAppTabConnectionMixin, _RVPAppConfigMixin, 
             self.header.lift()
         except Exception:
             logger.exception("header lift failed")
+        # =351: 外周の余白クリックで「イラストのみ表示」(隠し機能)
+        try:
+            self._install_bg_solo()
+        except Exception:
+            logger.exception("bg solo install failed")
 
         # =157: 幅が足りるかを判定して配置を決める。以後はウィンドウの
         # リサイズでも追従する(モードが変わったときだけ pack し直す)。
@@ -233,7 +238,7 @@ class RVPApp(_RVPAppHeaderMixin, _RVPAppTabConnectionMixin, _RVPAppConfigMixin, 
     # 表示中の数は len(self._play_pages)(=150で可変になった)。
     PLAY_PAGE_COUNT = len(PLAY_PAGE_ORDER)
 
-    PAGE_LAMP_H = 14                 # バーの高さ(px)
+    PAGE_LAMP_H = 28                 # バーの高さ(px)。=350で14→28(2倍)
 
     PAGE_LAMP_ON = "#9ccc3c"         # 点灯=scenario_map.CURRENT_FILL と同色
 

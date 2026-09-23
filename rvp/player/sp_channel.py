@@ -9,7 +9,7 @@ from ..scenario import (DEFAULT_PAN, END_DURATION, END_NONE, END_PLAYS,
     TRACK_ROTATE, TRACK_ROTATE_A10, TRACK_TWIST, TRACK_VIBRATION)
 from ..i18n import tr
 
-from .clock import PlaybackClock, _audio_duration_ms, describe_audio_load_error
+from .clock import PlaybackClock, describe_audio_load_error
 from .common import _CH_SLOT, logger
 
 
@@ -61,6 +61,14 @@ class _ScenarioPlayerChannelMixin:
 
         async def play_one(item) -> None:
             nonlocal ch_elapsed_ms
+            # =348: 区間の変数指定を再生直前の値で解決する
+            item = self._resolve_item_range(item)
+            if item is None:
+                stats["count"] += 1
+                return
+            if is_primary and clock is not None:
+                # =348: 再生位置(変数への代入用)=区間の開始+このアイテムの時計
+                self._pos_src = (item.start_s * 1000.0, clock)
             if item.video:
                 limit = None
                 if channel.end_type == END_DURATION:
@@ -89,24 +97,43 @@ class _ScenarioPlayerChannelMixin:
             if channel.end_type == END_PLAYS:
                 # 順番にN回再生して終了(Nがアイテム数を超える場合は周回)
                 i = 0
+                skipped = 0
                 while plays_done < end_count:
                     if interrupted():
                         return
-                    await play_one(channel.items[i % len(channel.items)])
-                    plays_done += 1
+                    it = channel.items[i % len(channel.items)]
                     i += 1
+                    if it.when and not it.when_ok(self.vars):
+                        # =349: 再生条件が不成立=飛ばす(回数に数えない)。
+                        # 1周まるごと不成立なら自然終了(空回り防止)
+                        skipped += 1
+                        if skipped >= len(channel.items):
+                            self._log_when_all_skipped(channel)
+                            return
+                        continue
+                    skipped = 0
+                    await play_one(it)
+                    plays_done += 1
                 return
             passes = end_count if channel.end_type == END_REPEAT else 1
             loop_forever = channel.end_type == END_NONE
             while True:
                 for _ in range(passes if not loop_forever else 1):
+                    played = 0
                     for item in channel.items:
                         if interrupted():
                             return
+                        if item.when and not item.when_ok(self.vars):
+                            continue      # =349: 再生条件が不成立=飛ばす
+                        played += 1
                         await play_one(item)
                         if (channel.end_type == END_DURATION
                                 and ch_elapsed_ms >= end_duration_ms):
                             return
+                    if played == 0:
+                        # =349: 1周まるごと再生条件が不成立=自然終了
+                        self._log_when_all_skipped(channel)
+                        return
                 if not loop_forever:
                     return
         else:  # MODE_RANDOM / MODE_RANDOM_BAG
@@ -161,6 +188,10 @@ class _ScenarioPlayerChannelMixin:
                         return
                     # =74: 全アイテムの重みが0以下=出せるものが無い →
                     # チャンネル自然終了(ユーザー決定)。無限chでもここで終わる
+                    if any(it.when for it in channel.items):
+                        # =349: 再生条件の付いたアイテムがあるなら理由を併記
+                        self._log_when_all_skipped(channel)
+                        return
                     self._log("end", tr(
                         "チャンネル{0}: 全アイテムの重みが0のため終了").format(
                             channel.channel_id))
@@ -224,7 +255,7 @@ class _ScenarioPlayerChannelMixin:
         self._log_item(channel.channel_id, item)
         slot = _CH_SLOT[channel.channel_id]
         try:
-            sound = pygame.mixer.Sound(item.audio)
+            sound = self._load_item_sound(item.audio)
         except Exception as e:
             logger.error(tr("音声の読み込み失敗: %s (%s)"), item.audio, e)
             # =249: メモリ系の失敗は原因と対処(44.1kHzへの変換など)を添える
@@ -234,7 +265,9 @@ class _ScenarioPlayerChannelMixin:
                 + ((" " + extra) if extra else ""))
             return 0.0
 
-        duration_ms = _audio_duration_ms(item.audio)
+        # =348: 長さは読み込み済みの Sound から取る(以前は同じファイルを
+        # もう一度デコードしていた)
+        duration_ms = int(sound.get_length() * 1000)
         # =59: 区間指定があれば、その範囲だけを鳴らす Sound に差し替える。
         # 経過表示・シークバー・funscript同期はすべて**区間の先頭が0秒**
         # (動画=51と同じ方針)。シーク元(_slot_sound)も切り出し後を持たせて、
@@ -523,3 +556,85 @@ class _ScenarioPlayerChannelMixin:
             self._apply_ops(item.on_complete, tr("アイテム完了時"))
 
         return duration_ms
+
+    def _resolve_item_range(self, item):
+        """=348: 区間の開始/終了が変数指定なら、いまの値で解決したコピーを返す。
+
+        開始は 0 未満を 0 に丸める。終了が開始以下なら終了の指定を捨てる
+        (末尾まで)。開始が音声の長さ以上ならそのアイテムは鳴らさず None
+        (すぐ終わる)。いずれもログへ警告を残す。
+        """
+        if item.start_var is None and item.end_var is None:
+            return item
+        import dataclasses
+        start_s, end_s = item.start_s, item.end_s
+        if item.start_var is not None:
+            try:
+                start_s = float(self.vars.get(item.start_var, 0) or 0)
+            except (TypeError, ValueError):
+                start_s = 0.0
+            if start_s < 0:
+                start_s = 0.0
+        if item.end_var is not None:
+            try:
+                end_s = float(self.vars.get(item.end_var, 0) or 0)
+            except (TypeError, ValueError):
+                end_s = None
+        if end_s is not None and end_s <= start_s:
+            self._log("warn", tr("区間の終了({0:g}秒)が開始({1:g}秒)以前のため、"
+                                 "末尾まで再生します").format(end_s, start_s))
+            end_s = None
+        if item.audio:
+            try:
+                adur = int(self._load_item_sound(item.audio).get_length()
+                           * 1000)
+            except Exception:
+                adur = 0
+            if adur > 0 and start_s * 1000 >= adur:
+                self._log("warn", tr("区間の開始({0:g}秒)が音声の長さ({1:g}秒)を"
+                                     "超えているため再生しません: {2}").format(
+                    start_s, adur / 1000, os.path.basename(item.audio)))
+                return None
+        return dataclasses.replace(item, start_s=start_s, end_s=end_s,
+                                   start_var=None, end_var=None)
+
+    def _load_item_sound(self, path: str):
+        """=348: アイテム音声の読み込み。**直前に読んだ1ファイル**を使い回す。
+
+        同じ音声を次のステート/イベントで途中から鳴らし直す(再生位置+
+        区間の変数指定)ときに、長い mp3 のデコード待ちで途切れないように
+        する。保持は1ファイルだけ(メモリを食い過ぎないため)。
+        """
+        cache = getattr(self, "_item_snd_cache", None)
+        if cache is not None and cache[0] == path:
+            return cache[1]
+        snd = pygame.mixer.Sound(path)
+        self._item_snd_cache = (path, snd)
+        return snd
+
+    def _playback_position_s(self) -> float:
+        """=348: シークバー追従チャンネルの再生位置(ファイル上の秒)。
+
+        区間の開始秒+そのアイテムの時計(シーク・一時停止を反映済み)。
+        アイテムの長さを超えた分(鳴り終わった後の待機)は長さで止める。
+        取れないとき(音声・スクリプト・動画のいずれも無いノード)は 0。
+        """
+        src = getattr(self, "_pos_src", None)
+        if src is None:
+            self._log("warn", tr("再生位置を取得できないため 0 を代入します"))
+            return 0.0
+        base_ms, clock = src
+        try:
+            now = float(clock.now_ms())
+        except Exception:
+            now = 0.0
+        dur = float(self.state.get("duration_ms") or 0)
+        if dur > 0:
+            now = min(now, dur)
+        return round((base_ms + max(0.0, now)) / 1000.0, 3)
+
+    def _log_when_all_skipped(self, channel) -> None:
+        """=349: 再生できるアイテムが無くなった(再生条件/重み)ことをログへ。"""
+        self._log("end", tr(
+            "チャンネル{0}: 再生条件を満たす(重みが0より大きい)アイテムが"
+            "無いため終了").format(channel.channel_id))

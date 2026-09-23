@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 import customtkinter as ctk
-import os
 import tkinter as tk
 from ..winstate import WindowMemory
 from ..i18n import tr
 
 from .common import (CTkOptionMenu, MSG_ERROR, MUTED, TEXT_MUTED, _COND_OPS,
-    _dialog_initialdir, _front_window, _parse_num_text, _place_popup,
-    _remember_dialog_dir)
+    _front_window, _parse_num_text, _place_popup)
 from .fields import CondListEditor, VarRefField
 from . import common as _clr   # =301: テーマ追従する色定数は定義元を参照
 from ._hooks import _pkg
@@ -44,7 +42,11 @@ class OpsDialog(ctk.CTkToplevel):
         # =126: 条件式(eval)の説明
         ctk.CTkLabel(body, text=tr("条件式は成立で1、不成立で0を代入します(対象は数値変数のみ)。"),
                      font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
-                     anchor="w").pack(fill="x", pady=(0, 4))
+                     anchor="w").pack(fill="x")
+        # =348: 再生位置の説明
+        ctk.CTkLabel(body, text=tr("再生位置は、シークバーが追従している音声の、ファイル上の位置(秒)を代入します(区間の開始秒を含む)。"),
+                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
+                     anchor="w", wraplength=580, justify="left").pack(fill="x", pady=(0, 4))
 
         for sec_title, key, ops_raw in sections:
             sec = {"key": key, "rows": []}
@@ -95,20 +97,23 @@ class OpsDialog(ctk.CTkToplevel):
             kind = "mul"
         elif "eval" in raw:
             kind = "eval"
+        elif isinstance(raw.get("value"), dict) and "position" in raw["value"]:
+            kind = "pos"          # =348: set の右辺が再生位置
         else:
             kind = "set"
-        target = raw.get(kind) or ""
+        target = raw.get("set" if kind == "pos" else kind) or ""
         row = ctk.CTkFrame(sec["rows_frame"], fg_color="transparent")
         row.pack(fill="x", pady=1)
         kind_label = {"add": tr("加算"), "mul": tr("乗算"),
                       "roll": tr("乱数"),
-                      "eval": tr("条件式")}.get(kind, tr("セット"))
+                      "eval": tr("条件式"),
+                      "pos": tr("再生位置")}.get(kind, tr("セット"))
         kind_var = tk.StringVar(value=kind_label)
         entry = {"frame": row, "kind_var": kind_var}
         CTkOptionMenu(
             row, variable=kind_var, width=84, height=24,
             values=[tr("セット"), tr("加算"), tr("乗算"), tr("乱数"),
-                    tr("条件式")],
+                    tr("条件式"), tr("再生位置")],
             fg_color=("gray75", "gray28"), button_color=("gray70", "gray33"),
             command=lambda _v, e=entry: self._update_row(e),
         ).pack(side="left")
@@ -126,7 +131,8 @@ class OpsDialog(ctk.CTkToplevel):
         val_area.pack(side="left", padx=4)
         value = VarRefField(val_area, width=80, placeholder=tr("値"))
         value.set_names(self.all_names)
-        value.set(raw.get("value") if "value" in raw else "")
+        value.set(raw.get("value") if "value" in raw and kind != "pos"
+                  else "")
         roll_min = VarRefField(val_area, width=64, placeholder=tr("最小"))
         roll_min.set_names(self.numeric_names)
         roll_min.set(raw.get("min") if "min" in raw else "")
@@ -181,13 +187,15 @@ class OpsDialog(ctk.CTkToplevel):
             return "roll"
         if v == tr("条件式"):
             return "eval"
+        if v == tr("再生位置"):
+            return "pos"
         return "set"
 
     def _update_row(self, entry):
         """加算/乗算/乱数/条件式は数値変数のみ対象。roll時は min〜max、
         eval時は [変数][演算子][値]、それ以外は単一値欄。"""
         kind = self._row_kind(entry)
-        if kind in ("add", "mul", "roll", "eval"):
+        if kind in ("add", "mul", "roll", "eval", "pos"):
             names = self.numeric_names or [""]
             entry["tgt_menu"].configure(values=names)
             if entry["tgt_var"].get() not in names:
@@ -202,6 +210,9 @@ class OpsDialog(ctk.CTkToplevel):
             entry["roll_min"].pack(side="left")
             entry["roll_sep"].pack(side="left", padx=2)
             entry["roll_max"].pack(side="left")
+        elif kind == "pos":
+            # =348: 値欄なし(シークバー追従チャンネルの再生位置を秒で代入)
+            pass
         elif kind == "eval":
             # =126: x ← (a op 値) の3点
             entry["cond_menu"].pack(side="left")
@@ -259,6 +270,10 @@ class OpsDialog(ctk.CTkToplevel):
                     except ValueError:
                         return tr("操作{0}: 乱数の最小/最大が不正です").format(i + 1), None
                     ops.append({"roll": name, "min": mn, "max": mx})
+                    continue
+                if kind == "pos":
+                    # =348: 再生位置(ファイル上の秒)を代入
+                    ops.append({"set": name, "value": {"position": True}})
                     continue
                 if kind == "eval":
                     # =126 条件式: when={"var","op","value"} を組み立てる
@@ -376,8 +391,7 @@ class PlayOptionsDialog(ctk.CTkToplevel):
     =343(ユーザー決定): 旧「背景」ダイアログの意味を広げ、**再生中の見え方を
     シナリオ作成者が決める設定**をまとめた。
 
-    - **背景イラスト**(トップレベル "background"): ファイル選択・クリア・暗さ(%)。
-      表示ON/OFFと透け具合は視聴側の設定が最終決定する(素材の指定だけ)。
+    - (=347 で背景イラストはノードごとの指定へ移し、ここからは外した)
     - **イベント遷移図**(トップレベル "event_map"): 再生タブの図のネタバレ防止。
       「未到達のイベント名を伏せる」「未通過の矢印を隠す」の2つ。こちらは
       **作成者の指定がそのまま効く**(視聴側では変えられない)。
@@ -387,13 +401,12 @@ class PlayOptionsDialog(ctk.CTkToplevel):
 
     self.result:
       None = キャンセル(変更なし)、それ以外は
-      {"background": None | {"file": p, "dim": n},
-       "event_map":  None | {"mask_names": bool, "hide_edges": bool}}
+      {"event_map":  None | {"mask_names": bool, "hide_edges": bool}}
       (None はそのキーごと削除)
     """
 
     FILETYPES_EXT = "*.png *.jpg *.jpeg *.webp *.bmp *.gif"
-    W, H = 600, 380
+    W, H = 600, 250          # =347: 背景セクションを外した
 
     def __init__(self, master, raw, base_dir: str, map_raw=None):
         super().__init__(master)
@@ -404,68 +417,14 @@ class PlayOptionsDialog(ctk.CTkToplevel):
         _place_popup(self, master, self.W, self.H)
         self.transient(master)
 
-        # 現在値を分解(文字列/辞書の2書式。dim省略=40)
-        self._file = ""
-        dim = 40
-        if isinstance(raw, str):
-            self._file = raw
-        elif isinstance(raw, dict):
-            f = raw.get("file")
-            self._file = f if isinstance(f, str) else ""
-            d = raw.get("dim", 40)
-            if isinstance(d, (int, float)) and not isinstance(d, bool):
-                dim = int(round(d))
-
-        ctk.CTkLabel(
-            self, text=tr("背景イラスト"),
-            font=ctk.CTkFont(size=13, weight="bold"), anchor="w",
-        ).pack(fill="x", padx=14, pady=(12, 0))
-        hint = ctk.CTkLabel(
-            self, text=tr("再生画面全体の背景に表示するイラストです(png/jpg等)。"
-                          "表示のON/OFFは視聴する人がメイン画面の設定で"
-                          "切り替えられます。"),
-            font=ctk.CTkFont(size=12), text_color=TEXT_MUTED,
-            wraplength=560, justify="left", anchor="w")
-        hint.pack(fill="x", padx=14, pady=(2, 8))
-
-        row = ctk.CTkFrame(self, fg_color="transparent")
-        row.pack(fill="x", padx=14)
-        self.file_label = ctk.CTkLabel(
-            row, text="", font=ctk.CTkFont(size=12), anchor="w",
-            wraplength=300, justify="left")
-        self.file_label.pack(side="left", fill="x", expand=True)
-        ctk.CTkButton(row, text=tr("クリア(背景なし)"), width=120, height=28,
-                      fg_color="transparent", border_width=1,
-                      border_color=MUTED, text_color=("gray20", "gray85"),
-                      hover_color=("gray85", "gray25"),
-                      command=self._clear).pack(side="right", padx=(6, 0))
-        ctk.CTkButton(row, text=tr("画像を選ぶ…"), width=110, height=28,
-                      fg_color=_clr.ACCENT, hover_color=_clr.ACCENT_HOVER,
-                      command=self._choose).pack(side="right")
-
-        dim_row = ctk.CTkFrame(self, fg_color="transparent")
-        dim_row.pack(fill="x", padx=14, pady=(10, 0))
-        ctk.CTkLabel(dim_row, text=tr("暗さ(%)"), width=70, anchor="w",
-                     font=ctk.CTkFont(size=12)).pack(side="left")
-        self.dim_var = tk.StringVar(value=str(dim))
-        self.dim_entry = ctk.CTkEntry(
-            dim_row, textvariable=self.dim_var, width=64, height=28,
-            justify="right", font=ctk.CTkFont(size=13))
-        self.dim_entry.pack(side="left", padx=(0, 8))
-        ctk.CTkLabel(
-            dim_row,
-            text=tr("0=画像を最も強く表示 〜 100=真っ黒(既定40。40より下げるほど画像の主張が強くなります)"),
-            font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
-            wraplength=360, justify="left", anchor="w",
-        ).pack(side="left", fill="x", expand=True)
-
-        # ---- =343: イベント遷移図(ネタバレ防止) ----
-        ctk.CTkFrame(self, height=1, fg_color=MUTED).pack(
-            fill="x", padx=14, pady=(14, 0))
+        # =347: 背景イラストはノードごとの指定(編集パネルの「背景」ブロック)
+        # へ移ったので、このダイアログはイベント遷移図だけになった。
+        # 引数 raw は互換のため受け取るが使わない。
+        del raw
         ctk.CTkLabel(
             self, text=tr("イベント遷移図"),
             font=ctk.CTkFont(size=13, weight="bold"), anchor="w",
-        ).pack(fill="x", padx=14, pady=(10, 0))
+        ).pack(fill="x", padx=14, pady=(12, 0))
         ctk.CTkLabel(
             self, text=tr("再生タブの図をどこまで見せるかの指定です。"
                           "「再生中に図はちょっと見たいが、この先のネタバレや"
@@ -508,45 +467,8 @@ class PlayOptionsDialog(ctk.CTkToplevel):
                       command=self._on_cancel).pack(side="right", padx=4)
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
-        self._refresh_file_label()
         _front_window(self)
         self.grab_set()
-
-    def _refresh_file_label(self):
-        if self._file:
-            self.file_label.configure(
-                text=os.path.basename(self._file), text_color=TEXT_MUTED)
-        else:
-            self.file_label.configure(text=tr("(なし)"),
-                                      text_color=TEXT_MUTED)
-
-    def _choose(self):
-        kwargs = {}
-        start = self._file if os.path.isabs(self._file) \
-            else os.path.join(self.base_dir, self._file)
-        # =270: 優先順は「設定済みファイルのフォルダ > 前回選択フォルダ
-        # (編集画面共有・永続) > シナリオフォルダ」。差し替え時は元画像の
-        # 場所が開くほうが自然なため、設定済みフォルダを最優先にする。
-        init = os.path.dirname(start) if self._file \
-            else _dialog_initialdir(self.base_dir)
-        if init and os.path.isdir(init):
-            kwargs["initialdir"] = init
-        path = _pkg().filedialog.askopenfilename(
-            parent=self, title=tr("背景画像を選択"),
-            filetypes=[(tr("画像ファイル"), self.FILETYPES_EXT),
-                       (tr("すべてのファイル"), "*.*")],
-            **kwargs)
-        if not path:
-            return
-        _remember_dialog_dir(path)
-        self._file = os.path.normpath(path)
-        self.err_label.configure(text="")
-        self._refresh_file_label()
-
-    def _clear(self):
-        self._file = ""
-        self.err_label.configure(text="")
-        self._refresh_file_label()
 
     def _event_map_result(self):
         """=343: 2つともOFFならキーごと削除(None)。"""
@@ -557,22 +479,7 @@ class PlayOptionsDialog(ctk.CTkToplevel):
         return {"mask_names": mask, "hide_edges": hide}
 
     def _on_save(self):
-        if not self._file:
-            self.result = {"background": None,
-                           "event_map": self._event_map_result()}
-            self.destroy()
-            return
-        raw = self.dim_var.get().strip()
-        try:
-            dim = int(raw)
-            if not (0 <= dim <= 100):
-                raise ValueError
-        except ValueError:
-            self.err_label.configure(
-                text=tr("暗さ(%)は 0〜100 の整数で指定してください"))
-            return
-        self.result = {"background": {"file": self._file, "dim": dim},
-                       "event_map": self._event_map_result()}
+        self.result = {"event_map": self._event_map_result()}
         self.destroy()
 
     def _on_cancel(self):
@@ -1159,3 +1066,61 @@ class ImportDialog(ctk.CTkToplevel):
         src, src_dir = self.src, self.src_dir
         self.destroy()
         owner._perform_import(src, src_dir, ids)
+
+
+class ItemWhenDialog(ctk.CTkToplevel):
+    """=349: アイテムの再生条件(判定式の AND リスト)を編集するダイアログ。
+
+    result: None=キャンセル / [] =条件なし(クリア) / [判定式, ...]。
+    """
+
+    def __init__(self, master, title: str, when_raw, names, string_vars,
+                 heading: str | None = None, desc: str | None = None):
+        super().__init__(master)
+        self.result = None
+        self._string_vars = set(string_vars or ())
+        # =352: 選択肢の表示条件でも使う(見出しと説明だけ差し替える)
+        self._heading = heading or tr("再生条件")
+        self.title(tr("{0} - {1}").format(self._heading, title))
+        self.resizable(True, False)
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=14, pady=12)
+        ctk.CTkLabel(
+            body, text=desc or tr("すべての条件が成立しているときだけ、このアイテムを"
+                          "抽選/順番再生の候補にします(不成立=重み0と同じ)。"),
+            font=ctk.CTkFont(size=11), text_color=TEXT_MUTED, anchor="w",
+            wraplength=520, justify="left").pack(fill="x", pady=(0, 6))
+        self.conds = CondListEditor(body)
+        self.conds.set_names(list(names))
+        self.conds.load(when_raw or [])
+        self.conds.pack(fill="x")
+        self.err = ctk.CTkLabel(body, text="", text_color=MSG_ERROR,
+                                font=ctk.CTkFont(size=11), anchor="w")
+        self.err.pack(fill="x", pady=(4, 0))
+        btns = ctk.CTkFrame(body, fg_color="transparent")
+        btns.pack(fill="x", pady=(8, 0))
+        ctk.CTkButton(btns, text=tr("キャンセル"), width=90,
+                      fg_color="transparent", border_width=1,
+                      border_color=MUTED, text_color=("gray20", "gray85"),
+                      command=self.destroy).pack(side="right")
+        ctk.CTkButton(btns, text="OK", width=90,
+                      fg_color=_clr.ACCENT, hover_color=_clr.ACCENT_HOVER,
+                      command=self._on_ok).pack(side="right", padx=6)
+        ctk.CTkButton(btns, text=tr("条件なしにする"), width=110,
+                      fg_color="transparent", border_width=1,
+                      border_color=MUTED, text_color=("gray20", "gray85"),
+                      command=self._on_clear).pack(side="left")
+        _front_window(self)
+        self.grab_set()
+
+    def _on_ok(self):
+        err, out = self.conds.collect(self._heading, self._string_vars)
+        if err:
+            self.err.configure(text=err)
+            return
+        self.result = out
+        self.destroy()
+
+    def _on_clear(self):
+        self.result = []
+        self.destroy()

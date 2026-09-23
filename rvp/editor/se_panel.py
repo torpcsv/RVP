@@ -384,9 +384,12 @@ class _ScenarioEditorPanelMixin:
             dflt_row, variable=self.choice_dflt_to_var, width=140, height=26,
             values=[""],
             fg_color=("gray75", "gray28"), button_color=("gray70", "gray33"))
-        ctk.CTkLabel(dflt_row, text=tr("(タイムアウト時・▶▶スキップ時の行き先)"),
-                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED
-                     ).pack(side="right")
+        # =352: 説明は行の右端ではなく次の行へ(「指定イベントへ」のメニューが
+        # 出ると幅が足りず、後から pack したメニュー側が削られていた)
+        ctk.CTkLabel(self.choice_inner,
+                     text=tr("(タイムアウト時・▶▶スキップ時の行き先)"),
+                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
+                     anchor="w").pack(fill="x", padx=(8, 0))
 
         # =274: 選択必須(▶▶で飛ばさない)。ONのとき "skip": "stay" で保存。
         # タイムリミット併用時のタイムアウト遷移は従来どおり進む(仕様)。
@@ -403,8 +406,41 @@ class _ScenarioEditorPanelMixin:
                      font=ctk.CTkFont(size=11), text_color=TEXT_MUTED
                      ).pack(side="left", padx=8)
 
+        # =352: 訪問済みの行き先を隠す+全部隠れたときの行き先。後者は
+        # 隠す仕組み(このチェック or 項目の表示条件)があるときだけ出す
+        hv_row = ctk.CTkFrame(self.choice_inner, fg_color="transparent")
+        hv_row.pack(fill="x", pady=(4, 0))
+        self.choice_hv_var = tk.BooleanVar(value=False)
+        self.choice_hv_check = ctk.CTkCheckBox(
+            hv_row, text=tr("訪問済みの行き先を隠す"),
+            variable=self.choice_hv_var,
+            font=ctk.CTkFont(size=12), checkbox_width=18, checkbox_height=18,
+            command=self._update_choice_ui)
+        self.choice_hv_check.pack(side="left")
+        ctk.CTkLabel(hv_row, text=tr("(一度入ったイベントへの選択肢を出さない)"),
+                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED
+                     ).pack(side="left", padx=8)
+        self.choice_ah_row = ctk.CTkFrame(self.choice_inner,
+                                          fg_color="transparent")
+        ctk.CTkLabel(self.choice_ah_row, text=tr("全部隠れたとき:"),
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED
+                     ).pack(side="left")
+        self.choice_ah_var = tk.StringVar(value=tr("デフォルト遷移先へ"))
+        CTkOptionMenu(
+            self.choice_ah_row, variable=self.choice_ah_var, width=170,
+            height=26, values=[tr("デフォルト遷移先へ"), tr("指定イベントへ")],
+            fg_color=("gray75", "gray28"), button_color=("gray70", "gray33"),
+            command=lambda _v: self._update_choice_ui(),
+        ).pack(side="left", padx=6)
+        self.choice_ah_to_var = tk.StringVar(value="")
+        self.choice_ah_to_menu = CTkOptionMenu(
+            self.choice_ah_row, variable=self.choice_ah_to_var, width=140,
+            height=26, values=[""],
+            fg_color=("gray75", "gray28"), button_color=("gray70", "gray33"))
+
         show_row = ctk.CTkFrame(self.choice_inner, fg_color="transparent")
         show_row.pack(fill="x", pady=(4, 4))
+        self.choice_show_row = show_row
         ctk.CTkLabel(show_row, text=tr("表示タイミング:"),
                      font=ctk.CTkFont(size=12), text_color=TEXT_MUTED
                      ).pack(side="left")
@@ -1051,3 +1087,7 @@ class _ScenarioEditorPanelMixin:
             self.bgm_pan_box, width=42, height=24,
             textvariable=self.bgm_pan_r_var, font=ctk.CTkFont(size=11))
         self.bgm_pan_r_entry.pack(side="left", padx=(2, 0))
+
+        # ===== 背景(=347): BGM ブロックの下。background_enabled ON のとき
+        # だけ _apply_background_enabled が pack する =====
+        self._build_bg_box(p)

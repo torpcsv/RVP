@@ -167,6 +167,14 @@ class _RVPAppPollMixin:
         st = self.player.state
         status = st["status"]
 
+        # =347: ノード入場の背景切り替え(プレイヤーが積んだ要求を番号で拾う)
+        seq = st.get("bg_seq", 0)
+        if seq != getattr(self, "_bg_seq_seen", 0):
+            self._bg_seq_seen = seq
+            req = st.get("bg_req")
+            if req is not None and getattr(self, "bg_art", None) is not None:
+                self.bg_art.set_node(req[0], req[1])
+
         text, color = self.STATUS_TEXT.get(status, (status, MUTED))
         self._apply(self.status_label, text=text, text_color=color)
 

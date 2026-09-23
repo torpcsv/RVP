@@ -311,37 +311,50 @@ class _ScenarioEditorNextMixin:
                            text_color=TEXT_MUTED)
         num.pack(side="left")
         label_var = tk.StringVar(value=label)
-        label_entry = ctk.CTkEntry(row, textvariable=label_var, width=260,
-                                   height=26,
-                                   placeholder_text=tr("ボタンの表示テキスト"))
-        label_entry.pack(side="left", padx=(2, 6))
-        ctk.CTkLabel(row, text="→", font=ctk.CTkFont(size=12),
-                     text_color=TEXT_MUTED).pack(side="left")
-        ids = self._event_id_choices()
-        to_var = tk.StringVar(value=to if to in self.data["events"] else ids[0])
-        to_menu = CTkOptionMenu(row, variable=to_var, width=150, height=26,
-                                    values=ids,
-                                    fg_color=("gray75", "gray28"),
-                                    button_color=("gray70", "gray33"))
-        to_menu.pack(side="left", padx=6)
-        entry = {"frame": row, "num": num, "label_var": label_var,
-                 "label_entry": label_entry, "to_var": to_var,
-                 "to_menu": to_menu, "raw": dict(raw or {})}
-        if self._has_vars():
-            ops_btn = ctk.CTkButton(
-                row, text="", width=86, height=26,
-                font=ctk.CTkFont(size=11),
-                fg_color="transparent", border_width=1, border_color=MUTED,
-                text_color=("gray20", "gray85"), hover_color=("gray85", "gray28"),
-                command=lambda e=entry: self._edit_choice_row_ops(e))
-            ops_btn.pack(side="left", padx=(6, 0))
-            entry["ops_btn"] = ops_btn
-            self._update_choice_ops_btn(entry)
+        # =352: 右端に「条件」ボタンが増えたので、表示テキスト欄は最小幅を
+        # 小さくして残りの幅いっぱいに伸ばす(右端のボタン類が削られない)。
+        # 右側(✕→条件→変数→行き先→→)は右から pack する
+        entry = {"frame": row, "num": num, "raw": dict(raw or {})}
         ctk.CTkButton(row, text="✕", width=26, height=26,
                       fg_color="transparent", text_color="#e05a5a",
                       hover_color=("gray85", "gray28"),
                       command=lambda e=entry: self._delete_choice_row(e)
-                      ).pack(side="left", padx=(4, 0))
+                      ).pack(side="right", padx=(4, 0))
+        if self._has_vars():
+            when_btn = ctk.CTkButton(
+                row, text="", width=66, height=26,
+                font=ctk.CTkFont(size=11),
+                fg_color="transparent", border_width=1, border_color=MUTED,
+                text_color=("gray20", "gray85"), hover_color=("gray85", "gray28"),
+                command=lambda e=entry: self._edit_choice_row_when(e))
+            when_btn.pack(side="right", padx=(4, 0))
+            entry["when_btn"] = when_btn
+            ops_btn = ctk.CTkButton(
+                row, text="", width=66, height=26,
+                font=ctk.CTkFont(size=11),
+                fg_color="transparent", border_width=1, border_color=MUTED,
+                text_color=("gray20", "gray85"), hover_color=("gray85", "gray28"),
+                command=lambda e=entry: self._edit_choice_row_ops(e))
+            ops_btn.pack(side="right", padx=(4, 0))
+            entry["ops_btn"] = ops_btn
+        ids = self._event_id_choices()
+        to_var = tk.StringVar(value=to if to in self.data["events"] else ids[0])
+        to_menu = CTkOptionMenu(row, variable=to_var, width=140, height=26,
+                                    values=ids,
+                                    fg_color=("gray75", "gray28"),
+                                    button_color=("gray70", "gray33"))
+        to_menu.pack(side="right", padx=(6, 0))
+        ctk.CTkLabel(row, text="→", font=ctk.CTkFont(size=12),
+                     text_color=TEXT_MUTED).pack(side="right", padx=(6, 0))
+        label_var = tk.StringVar(value=label)
+        label_entry = ctk.CTkEntry(row, textvariable=label_var, width=120,
+                                   height=26,
+                                   placeholder_text=tr("ボタンの表示テキスト"))
+        label_entry.pack(side="left", padx=(2, 0), fill="x", expand=True)
+        entry.update({"label_var": label_var, "label_entry": label_entry,
+                      "to_var": to_var, "to_menu": to_menu})
+        self._update_choice_ops_btn(entry)
+        self._update_choice_when_btn(entry)
         self.choice_rows.append(entry)
         self._renumber_choice_rows()
 
@@ -349,6 +362,37 @@ class _ScenarioEditorNextMixin:
         if entry.get("ops_btn"):
             n = len(entry["raw"].get("ops") or [])
             entry["ops_btn"].configure(text=tr("変数({0})").format(n))
+
+    def _update_choice_when_btn(self, entry):
+        """=352: 表示条件ボタン「条件(n)」。条件付きは枠をアクセント色・太く。"""
+        btn = entry.get("when_btn")
+        if btn:
+            n = len(entry["raw"].get("when") or [])
+            btn.configure(text=tr("条件({0})").format(n),
+                          border_color=_clr.ACCENT if n else MUTED,
+                          border_width=2 if n else 1)
+
+    def _edit_choice_row_when(self, entry):
+        """=352: 選択肢1件の表示条件(判定式の AND)を編集する。"""
+        from .dialogs import ItemWhenDialog
+        idx = self.choice_rows.index(entry) + 1
+        dlg = ItemWhenDialog(
+            self, tr("選択肢{0}").format(idx), entry["raw"].get("when") or [],
+            self._var_names(), self._string_var_names(),
+            heading=tr("表示条件"),
+            desc=tr("すべての条件が成立しているときだけ、この選択肢を表示します"
+                    "(判定は選択肢を表示した瞬間)。"))
+        self.wait_window(dlg)
+        if dlg.result is None:
+            return
+        if dlg.result:
+            entry["raw"]["when"] = dlg.result
+        else:
+            entry["raw"].pop("when", None)
+        self._update_choice_when_btn(entry)
+        self._update_choice_ui()
+        if hasattr(self, "_hist_check"):
+            self._hist_check()
 
     def set_choice_row_ops(self, entry, result: dict):
         """選択肢1件の変数操作(ops=選択時のみ発火)を反映する。"""
@@ -425,6 +469,23 @@ class _ScenarioEditorNextMixin:
                 self.choice_dflt_to_var.set(self._event_id_choices()[0])
         else:
             self.choice_dflt_to_menu.pack_forget()
+        # =352: 全部隠れたときの行き先は、隠す仕組みがあるときだけ出す
+        hides = self.choice_hv_var.get() or any(
+            e["raw"].get("when") for e in self.choice_rows)
+        if hides:
+            if not self.choice_ah_row.winfo_manager():
+                self.choice_ah_row.pack(fill="x", pady=(4, 0),
+                                        before=self.choice_show_row)
+            if self.choice_ah_var.get() == tr("指定イベントへ"):
+                self.choice_ah_to_menu.configure(values=self._event_id_choices())
+                if self.choice_ah_to_var.get() not in self.data["events"]:
+                    self.choice_ah_to_var.set(self._event_id_choices()[0])
+                if not self.choice_ah_to_menu.winfo_manager():
+                    self.choice_ah_to_menu.pack(side="left", padx=(6, 0))
+            else:
+                self.choice_ah_to_menu.pack_forget()
+        else:
+            self.choice_ah_row.pack_forget()
         if self.choice_show_var.get() == tr("イベント開始から指定時間後"):
             # 時間指定は秒のみ(分欄は廃止)
             self.choice_ssec_entry.pack(side="left", padx=(6, 2))
@@ -439,10 +500,19 @@ class _ScenarioEditorNextMixin:
         self._clear_choice_rows()
         self._choice_extra = {k: v for k, v in nxt.items()
                               if k not in ("choice", "timeout", "default",
-                                           "show", "on_timeout", "skip")}
+                                           "show", "on_timeout", "skip",
+                                           "hide_visited", "when_all_hidden")}
         self._choice_timeout_ops = list(nxt.get("on_timeout") or [])
         # =274: 選択必須(skip=stay)
         self.choice_stay_var.set(nxt.get("skip") == "stay")
+        # =352: 訪問済みを隠す/全部隠れたときの行き先
+        self.choice_hv_var.set(nxt.get("hide_visited") is True)
+        ah = nxt.get("when_all_hidden")
+        if isinstance(ah, dict) and isinstance(ah.get("to"), str):
+            self.choice_ah_var.set(tr("指定イベントへ"))
+            self.choice_ah_to_var.set(ah["to"])
+        else:
+            self.choice_ah_var.set(tr("デフォルト遷移先へ"))
         for ent in nxt.get("choice") or []:
             self._add_choice_row(str(ent.get("label", "")), ent.get("to"),
                                  raw=ent if isinstance(ent, dict) else None)
@@ -530,6 +600,18 @@ class _ScenarioEditorNextMixin:
             value["skip"] = "stay"
         if self._choice_timeout_ops:
             value["on_timeout"] = self._choice_timeout_ops
+        # =352: 訪問済みを隠す(既定 false は書かない)/全部隠れたときの行き先
+        # (隠す仕組みがあり「指定イベントへ」のときだけ書く)
+        if self.choice_hv_var.get():
+            value["hide_visited"] = True
+        hides = self.choice_hv_var.get() or any(e.get("when")
+                                                for e in entries)
+        if hides and self.choice_ah_var.get() == tr("指定イベントへ"):
+            to = self.choice_ah_to_var.get()
+            if to not in self.data["events"]:
+                self._want_mark(self.choice_ah_to_menu, "error")
+                return tr("イベント {0}: 全部隠れたときの遷移先のイベントを選択してください").format(event_id), None
+            value["when_all_hidden"] = {"to": to}
         # 編集対象外キーを保持する
         for k, v in self._choice_extra.items():
             value.setdefault(k, v)

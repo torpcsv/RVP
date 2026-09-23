@@ -172,6 +172,8 @@ def _map_item_paths(data: dict, fn) -> None:
                         do_channels(st.get("channels"))
                         do_video(st)
                         do_bgm(st)
+                        do_background(st)     # =347
             do_channels(ev.get("channels"))
             do_video(ev)
             do_bgm(ev)
+            do_background(ev)                 # =347

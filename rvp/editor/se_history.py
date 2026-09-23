@@ -14,18 +14,21 @@ class _ScenarioEditorHistoryMixin:
                 "detail": self._detail_text,
                 "device": self.device_enabled,
                 "bgm": self.bgm_enabled,
+                "bg": self.background_enabled,
                 "sel": self.selected,
                 "state": self.sel_state}
 
     def _hist_key_live(self):
         """比較用キー(生の data から。title はファイル名追従なので除外)。"""
         d = {k: v for k, v in self.data.items() if k != "title"}
-        return (d, self._detail_text, self.device_enabled, self.bgm_enabled)
+        return (d, self._detail_text, self.device_enabled, self.bgm_enabled,
+                self.background_enabled)
 
     @staticmethod
     def _hist_key_snap(snap: dict):
         d = {k: v for k, v in snap["data"].items() if k != "title"}
-        return (d, snap["detail"], snap["device"], snap["bgm"])
+        return (d, snap["detail"], snap["device"], snap["bgm"],
+                snap.get("bg", False))
 
     def _hist_reset(self):
         """履歴を空にして現在を起点にする(起動時)。"""
@@ -127,6 +130,8 @@ class _ScenarioEditorHistoryMixin:
             self._detail_text = snap["detail"]
             self.device_enabled = snap["device"]
             self.bgm_enabled = snap["bgm"]
+            self.background_enabled = snap.get("bg", False)
+            self._apply_background_enabled()
             self._apply_device_enabled()
             self._apply_bgm_enabled()
             events = self.data["events"]

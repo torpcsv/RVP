@@ -16,6 +16,12 @@ class _ScenarioPlayerInteractMixin:
         if (self.state["choice"] is None or self._watch_goto is not None
                 or isinstance(self._jump, tuple)):
             return
+        vis = getattr(self, "_choice_vis", None)
+        if vis is not None:
+            # =352: ボタンの番号(表示中の並び)→ 元の選択肢の番号
+            if not 0 <= index < len(vis):
+                return
+            index = vis[index]
         if 0 <= index < len(self._choice_entries):
             ent = self._choice_entries[index]
             self._choice_result_ops = ent.ops
@@ -56,11 +62,22 @@ class _ScenarioPlayerInteractMixin:
         イベント内でイベント側の選択肢と区別できるようにする)。
         """
         if self.state["choice"] is not None:
-            return
+            return None
         if rule is None:
             rule = event.next_choice
+        # =352: 表示する項目をこの瞬間に決める(Q2)。全部隠れたら表示せず、
+        # 行き先 (to, to_event) を返す(呼び出し側が扱う。表示したら None)
+        vis = self._choice_visible(rule, owner)
+        if vis is not None and not vis:
+            to, to_event = rule.pick_default_visible([])
+            dest = tr("イベント:{0}").format(to) if to_event else str(to)
+            self._log("choice",
+                      tr("選択肢: すべて非表示のため表示せず → {0}").format(dest))
+            return to, to_event
         self._choice_owner = owner
         self._choice_entries = list(rule.entries)
+        self._choice_vis = vis
+        self._choice_rule = rule
         self._choice_result = None
         self._choice_result_event = False
         clock = PlaybackClock()
@@ -71,10 +88,26 @@ class _ScenarioPlayerInteractMixin:
         self.state["choice_remaining_ms"] = rule.timeout_ms
         ui_id = event.event_id if owner == "event" \
             else "{0}/{1}".format(event.event_id, state_id)
+        shown = rule.entries if vis is None else [rule.entries[i] for i in vis]
         self.state["choice"] = {"event_id": ui_id,
-                                "labels": [e.label for e in rule.entries]}
-        self._log_choice_show(rule)
+                                "labels": [e.label for e in shown]}
+        self._log_choice_show(rule, vis)
         self._video_osd(tr("選択肢が表示されています(RVPウィンドウで選択)"))
+        return None
+
+    def _choice_visible(self, rule, owner: str = "event"):
+        """=352: 表示する選択肢の番号リスト。表示制御が無ければ None(全件)。"""
+        if rule is None or not rule.has_visibility:
+            return None
+        return rule.visible_indices(
+            self.vars, self._visited_events,
+            self._visited_states if owner == "state" else ())
+
+    def _choice_default_info(self, rule) -> tuple:
+        """=352: 表示中の項目だけで既定の行き先を決める(タイムアウト・▶▶)。"""
+        if self._choice_rule is rule:
+            return rule.pick_default_visible(self._choice_vis)
+        return rule.pick_default_info()
 
     @staticmethod
     def _entry_desc(index: int, entries) -> str:
@@ -110,10 +143,19 @@ class _ScenarioPlayerInteractMixin:
             return rule.default_to
         return self._entry_desc(0, rule.entries) or "-"
 
-    def _log_choice_show(self, rule) -> None:
-        """選択肢を表示したことをログへ残す(候補一覧・制限時間・既定)。"""
-        items = " ".join(self._entry_desc(i, rule.entries)
-                         for i in range(len(rule.entries)))
+    def _log_choice_show(self, rule, vis=None) -> None:
+        """選択肢を表示したことをログへ残す(候補一覧・制限時間・既定)。
+
+        =352: 隠した項目は「非表示: 番号)ラベル」として後ろに添える
+        (番号は元の並び)。
+        """
+        idx = range(len(rule.entries)) if vis is None else vis
+        items = " ".join(self._entry_desc(i, rule.entries) for i in idx)
+        if vis is not None and len(vis) < len(rule.entries):
+            hidden = " ".join(self._entry_desc(i, rule.entries)
+                              for i in range(len(rule.entries))
+                              if i not in vis)
+            items += " " + tr("(非表示: {0})").format(hidden)
         extras = []
         if rule.timeout_ms is not None:
             extras.append(tr("制限{0:g}秒").format(rule.timeout_ms / 1000.0))
@@ -133,6 +175,8 @@ class _ScenarioPlayerInteractMixin:
         self._choice_result_index = None
         self._choice_result_event = False
         self._choice_owner = "event"
+        self._choice_vis = None           # =352
+        self._choice_rule = None
 
     def _choice_resolution(self, rule, owner: str = "event") -> str | None:
         """選択済み/タイムアウトなら遷移先を返す(変数操作もここで発火)。未解決はNone。
@@ -160,7 +204,7 @@ class _ScenarioPlayerInteractMixin:
                 self._apply_ops(rule.on_timeout, tr("タイムアウト時"))
                 if self._watch_goto is not None or isinstance(self._jump, tuple):
                     return None   # 監視(watch)が発火 → デフォルト遷移は破棄
-                to, to_event = rule.pick_default_info()
+                to, to_event = self._choice_default_info(rule)   # =352
                 self._choice_result_event = to_event
                 self._log("end", tr("選択肢がタイムアウト: {0}").format(
                     self._to_desc(to, rule.entries, to_event=to_event)))
@@ -176,14 +220,20 @@ class _ScenarioPlayerInteractMixin:
         rule = event.next_choice
         while not self._stop_requested and self._jump is None:
             if self.state["choice"] is None:
+                hidden = None
                 if rule.show_mode == "start":
-                    self._show_choice(event)
+                    hidden = self._show_choice(event)
                 elif rule.show_mode == "ms" and event_clock.now_ms() >= rule.show_ms:
-                    self._show_choice(event)
+                    hidden = self._show_choice(event)
                 elif (rule.show_mode == "end" and self._winding_down
                         and not self._transition_winding):
                     # =275: ステート移行の巻き取り中は「イベント終了」ではない
-                    self._show_choice(event)
+                    hidden = self._show_choice(event)
+                if hidden is not None:
+                    # =352: 全部隠れた=選択肢は出さない。イベントはそのまま
+                    # 続け、自然終了(または▶▶)でこの行き先へ進む
+                    self._choice_hidden_to = hidden[0]
+                    return
             else:
                 to = self._choice_resolution(rule, owner="event")
                 if to is not None:
@@ -217,7 +267,13 @@ class _ScenarioPlayerInteractMixin:
     async def _wait_choice(self, event) -> str | None:
         """イベント自然終了後の待機フェーズ。選択/タイムアウトまで待つ。"""
         rule = event.next_choice
-        self._show_choice(event)   # 未表示ならここで表示
+        if self._choice_hidden_to is not None:
+            # =352: 表示の瞬間に全部隠れていた → その行き先へ(待機しない)
+            return self._choice_hidden_to
+        hidden = self._show_choice(event)   # 未表示ならここで表示
+        if hidden is not None:
+            self._choice_hidden_to = hidden[0]
+            return hidden[0]
         while not self._stop_requested:
             if self._watch_goto is not None or isinstance(self._jump, tuple):
                 return None   # 監視(watch)の発火が選択肢より優先
@@ -231,7 +287,7 @@ class _ScenarioPlayerInteractMixin:
                     self._log("choice", tr("▶▶は無効: 選択されるまで待機します(選択必須)"))
                     continue
                 # 待機中の▶▶はデフォルト遷移先(first/random/指定イベント)へ
-                to = rule.pick_default()
+                to = self._choice_default_info(rule)[0]   # =352 表示中から
                 self._log("end", tr("選択肢を手動でスキップ(▶▶): {0}").format(
                     self._to_desc(to, rule.entries)))
                 return to
