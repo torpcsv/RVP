@@ -305,10 +305,11 @@ def _review_segments(ttype: str, src) -> list:
     先頭から通して見るだけなので、断片の位置は t0=0 / x0=0 で固定する。
     """
     from ..player import ScenarioPlayer as _SP
+    from ..player.sp_graph import GRAPH_PRE_ROTATE, GRAPH_PRE_VIBRATION
 
-    def seg(key, kind, points):
+    def seg(key, kind, points, pre=None):
         return {"key": key, "kind": kind, "points": points,
-                "times": [p[0] for p in points],
+                "times": [p[0] for p in points], "pre": pre,   # =355
                 "x0": 0.0, "x1": None, "t0": 0.0, "live": False}
 
     if ttype == "linear":
@@ -316,11 +317,14 @@ def _review_segments(ttype: str, src) -> list:
     if ttype == "twist":
         return [seg("twist", "linear", _SP._graph_points_funscript(src))]
     if ttype == "vibration":
-        return [seg("vibration", "step", _SP._graph_points_funscript(src))]
+        return [seg("vibration", "step", _SP._graph_points_funscript(src),
+                    GRAPH_PRE_VIBRATION)]
     if ttype in REVIEW_ROTATE_TYPES:
         base = "rotate_ufo" if ttype == "rotate_ufo" else "rotate_a10"
         if getattr(src, "channels", 1) >= 2:
             return [seg(base + ("_r" if r else ""), "step",
-                        _SP._graph_points_rotate(src, r)) for r in (0, 1)]
-        return [seg(base, "step", _SP._graph_points_rotate(src, 0))]
+                        _SP._graph_points_rotate(src, r), GRAPH_PRE_ROTATE)
+                    for r in (0, 1)]
+        return [seg(base, "step", _SP._graph_points_rotate(src, 0),
+                    GRAPH_PRE_ROTATE)]
     return []

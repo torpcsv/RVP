@@ -1,6 +1,8 @@
 """シナリオ編集ウィンドウ本体(ScenarioEditor)。"""
 from __future__ import annotations
 
+from .. import wintitle
+
 import customtkinter as ctk
 import json
 import os
@@ -15,7 +17,8 @@ from .dialogs import PlayOptionsDialog
 from .help import HelpDialog
 from .review import ItemReviewDialog
 from .se_bgm import _ScenarioEditorBgmMixin
-from .se_background import _ScenarioEditorBackgroundMixin
+from .se_background import _ScenarioEditorBackgroundMixin, BG_FILETYPES_EXT
+from .se_playui import _ScenarioEditorPlayUiMixin
 from .se_correlation import _ScenarioEditorCorrelationMixin
 from .se_events import _ScenarioEditorEventsMixin
 from .se_history import _ScenarioEditorHistoryMixin
@@ -29,7 +32,10 @@ from . import common as _clr   # =301: テーマ追従する色定数は定義�
 from ._hooks import _pkg
 
 
-class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _ScenarioEditorHistoryMixin, _ScenarioEditorPanelMixin, _ScenarioEditorNextMixin, _ScenarioEditorCorrelationMixin, _ScenarioEditorStatesMixin, _ScenarioEditorEventsMixin, _ScenarioEditorBgmMixin, _ScenarioEditorBackgroundMixin, _ScenarioEditorSaveMixin, ctk.CTkToplevel):
+BG_IMAGE_EXTS = tuple(e.lstrip("*") for e in BG_FILETYPES_EXT.split())   # =362
+
+
+class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _ScenarioEditorHistoryMixin, _ScenarioEditorPanelMixin, _ScenarioEditorNextMixin, _ScenarioEditorCorrelationMixin, _ScenarioEditorStatesMixin, _ScenarioEditorEventsMixin, _ScenarioEditorBgmMixin, _ScenarioEditorBackgroundMixin, _ScenarioEditorPlayUiMixin, _ScenarioEditorSaveMixin, ctk.CTkToplevel):
     """シナリオ編集ウィンドウ。"""
 
     EV_END_CHOICES = (tr("合計N秒で次へ"), tr("合計N回の再生で次へ"), tr("N回のステート移行で次へ"))
@@ -250,11 +256,18 @@ class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _Sce
         self._refresh_dnd_hints()
 
     def _refresh_dnd_hints(self):
-        """全チャンネル枠の「(D&D可)」を `_dnd_ok` に合わせる(=160)。"""
+        """全チャンネル枠の「(D&D可)」を `_dnd_ok` に合わせる(=160)。
+
+        =362: BGM・背景ブロックの「(D&D可)」も同じく合わせる。
+        """
         for sec in getattr(self, "channel_sections", {}).values():
             fn = getattr(sec, "set_dnd_hint", None)
             if callable(fn):
                 fn(self._dnd_ok)
+        if getattr(self, "bgm_dnd_hint", None) is not None:
+            self.set_bgm_dnd_hint(self._dnd_ok)
+        if getattr(self, "bg_dnd_hint", None) is not None:
+            self.set_bg_dnd_hint(self._dnd_ok)
 
     def _dnd_hit(self, x, y):
         """落下点(スクリーン座標)に当たるチャンネル枠/アイテム枠/動画行を返す。
@@ -329,6 +342,12 @@ class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _Sce
                 # =256: BGMブロックへ落とした音声はBGMアイテムとして追加
                 # (BGM:OFFのときは受けない=デバイスOFFのfs D&Dと同じ流儀)
                 self._bgm_dropped_audio(audio)
+            images = [p for p in paths
+                      if os.path.splitext(p)[1].lower() in BG_IMAGE_EXTS]
+            if images and self.background_enabled and self._bg_hit(x, y):
+                # =362: 背景ブロックへ落とした画像を背景に設定(背景:OFF では
+                # ブロック自体が隠れているので受けない)
+                self._bg_dropped_image(images)
             if fs and row is not None:
                 # =278: トラック行の上ならその種別へ(タグ規則より優先)
                 ttype = row.dropped_track_hit(x, y)
@@ -559,6 +578,7 @@ class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _Sce
                       fg_color=_clr.ACCENT, hover_color=_clr.ACCENT_HOVER,
                       command=win.destroy).pack(pady=(0, 16))
         win.transient(self)
+        wintitle.schedule_fix_titlebar(win)   # =369: ダークでタイトルバーが白くなる対策
         try:
             win.grab_set()
         except Exception:
@@ -615,7 +635,8 @@ class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _Sce
         外にある画像は外部素材警告・素材コピーの対象=_map_item_paths)。
         """
         dlg = PlayOptionsDialog(self, self.data.get("background"),
-                                self.base_dir, self.data.get("event_map"))
+                                self.base_dir, self.data.get("event_map"),
+                                self.data.get("play_controls"))
         self.wait_window(dlg)
         if dlg.result is None:
             return
@@ -625,6 +646,12 @@ class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _Sce
             self.data.pop("event_map", None)
         else:
             self.data["event_map"] = emap
+        # =366: 再生タブの操作部品(2つともOFFならキーごと消す)
+        pc = dlg.result.get("play_controls")
+        if pc is None:
+            self.data.pop("play_controls", None)
+        else:
+            self.data["play_controls"] = pc
 
     def refresh_theme(self):
         """=151: メイン画面でテーマが切り替わったときに呼ばれる。

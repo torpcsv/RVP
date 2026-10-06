@@ -12,7 +12,7 @@ from ..i18n import tr
 
 from .parse_channels import (check_script_channels, check_video_channels,
     parse_channel, parse_device, parse_seek_channel)
-from .parse_items import parse_bgm, parse_node_background
+from .parse_items import parse_bgm, parse_node_background, parse_node_ui
 from .parse_vars import (_require_var, parse_cond_next, parse_conds,
     parse_numref, parse_ops)
 
@@ -88,8 +88,11 @@ def parse_choice(ctx, raw, where, state_mode: bool = False):
         if ent.get("when") is not None:
             when = tuple(parse_conds(ctx, ent.get("when"),
                                      tr("{0} choice[{1}] when").format(where, i)))
+        # =363: ボタンの色(イベント図の color と同じ書式・表示専用)
+        check_node_color(ent, tr("{0} choice[{1}]").format(where, i))
         entries.append(ChoiceEntry(label=label, to=to, ops=ops,
-                                   to_event=to_event, when=when))
+                                   to_event=to_event, when=when,
+                                   color=str(ent.get("color") or "")))
 
     on_timeout = parse_ops(ctx, raw.get("on_timeout"),
                            tr("{0} on_timeout").format(where))
@@ -154,6 +157,12 @@ def parse_choice(ctx, raw, where, state_mode: bool = False):
         ah_to, ah_event = parse_choice_to(ctx, ahraw["to"],
             tr("{0} when_all_hidden").format(where), state_mode)
 
+    # =357: 残り時間を伏せる(タイムリミットが無ければ効果なし)
+    hrem = raw.get("hide_remaining", False)
+    if not isinstance(hrem, bool):
+        raise ValueError(
+            tr("{0}: hide_remaining は true / false で指定してください").format(where))
+
     return ChoiceRule(entries=entries, timeout_ms=timeout_ms,
                       on_timeout=on_timeout,
                       default_mode=default_mode, default_to=default_to,
@@ -161,7 +170,8 @@ def parse_choice(ctx, raw, where, state_mode: bool = False):
                       show_mode=show_mode, show_ms=show_ms,
                       default_to_event=default_to_event,
                       hide_visited=hv, all_hidden_to=ah_to,
-                      all_hidden_to_event=ah_event, state_mode=state_mode)
+                      all_hidden_to_event=ah_event, state_mode=state_mode,
+                      hide_remaining=hrem)
 
 
 def parse_input(ctx, raw, where):
@@ -466,6 +476,7 @@ def parse_state(ctx, state_id, raw, where) -> EventState:
             seek_channel=seek_ch,
             bgm=parse_bgm(ctx, raw.get("bgm"), where),
             background=parse_node_background(ctx, raw.get("background"), where),
+            **parse_node_ui(ctx, raw, where),
         )
     # 動画ステートの device 既定は「担当なし」(チャンネルはデバイスを
     # 駆動しない=全種別が動画側)。明示指定した種別のみチャンネル駆動。
@@ -491,6 +502,7 @@ def parse_state(ctx, state_id, raw, where) -> EventState:
         seek_channel=seek_ch, video_channel=vcid,
         bgm=parse_bgm(ctx, raw.get("bgm"), where),
             background=parse_node_background(ctx, raw.get("background"), where),
+            **parse_node_ui(ctx, raw, where),
     )
 
 

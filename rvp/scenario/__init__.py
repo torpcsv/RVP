@@ -75,7 +75,7 @@ from .constants import (MODE_SEQUENTIAL, MODE_RANDOM, MODE_RANDOM_BAG,
 from .tracks import (wav_duration_ms, load_script_source, track_range_ms,
     normalize_track_type, AUTO_FS_TAGS, CSV_TRACK_TYPES, auto_bind_tracks)  # noqa: F401
 from .model import (Pan, DeviceTrack, EventItem, NumRef, Channel, BgmItem,
-    BgmSpec, BackgroundSpec, EventMapSpec, StateTransition, EventState,
+    BgmSpec, BackgroundSpec, EventMapSpec, PlayControlsSpec, StateTransition, EventState,
     NextRule, _is_num,
     check_node_pos, check_node_color, VarDecl, VarOp, VarCond,
     _describe_cond, CondRule, ChoiceEntry, WatchRule, ChoiceRule, InputRule,

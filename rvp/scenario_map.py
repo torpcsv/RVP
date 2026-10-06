@@ -31,7 +31,7 @@ STATE_EDGE_COLOR = "#8a8a8a"
 # (main.PAGE_LAMP_ON)が同色を参照しているため定数としては残す。
 CURRENT_FILL = "#9ccc3c"     # (旧)現在実行中の黄緑。ランプ色の由来として残置
 CURRENT_TEXT = "#1f1f1f"     # (旧)黄緑ノード上の文字
-MASK_LABEL = "？"            # =343: 未到達イベント名の伏せ字
+MASK_LABEL = "？"            # =343: 未到達イベント名の伏せ字(=367 で一度「???」にしたがユーザー指示で「？」へ戻した=368)
 TRAIL_COLOR = "#3ddc84"      # 辿った遷移の線(緑)
 TRAIL_WIDTH = 3
 VIDEO_LABEL_COLOR = "#6aa9dc"   # 動画つきノードの「▶動画」ラベル(水色)
@@ -640,7 +640,8 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
                    trail=None, glow=None, visited=None,
                    on_click=None, on_rclick=None,
                    positions=None, on_move=None,
-                   mask_names=False, hide_edges=False, seen_edges=None) -> dict:
+                   mask_names=False, hide_edges=False, seen_edges=None,
+                   hide_unvisited=False) -> dict:
     """イベント図を canvas へ描画する。positions({ev_id:(x,y)})を返す。
 
     - positions: =299 手動配置の座標(None=自動配置 layout_tree)
@@ -668,11 +669,19 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
       (往復のうち片方だけ通っていれば、その片道の矢印として描く)
     - seen_edges: 実際に通った (from, to) ペア集合(再生側が積み上げたもの)。
       None のときは trail を使う
+    - hide_unvisited: =367 **未到達のイベント(○・名前・添え字)と未通過の矢印を
+      描かない**(mask_names/hide_edges より優先)。描くのは到達済み(visited)・
+      現在地(current)・開始イベント(入口なのでネタバレにならない)だけ。
+      配置は全イベントで決める(隠したイベントの位置は空いたまま=到達して
+      現れても他の○が動かない)
     """
     c = canvas
     c.configure(bg=canvas_bg())   # テーマに応じて背景色を追従
     c.delete("all")
     r = NODE_R
+    if hide_unvisited:                  # =367: 完全に隠す方が優先
+        mask_names = False
+        hide_edges = True
     trail = set(trail or ())
     seen = set(seen_edges) if seen_edges is not None else set(trail)
     if positions is None:
@@ -681,6 +690,12 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
         positions = dict(positions)
     xs = [px for (px, _py) in positions.values()] or [60]
     max_x = max(xs) + r           # 最右ノードの右端(スクロール域算出用)
+    if hide_unvisited:
+        _vis = set(visited or ())
+        shown = {n for n in positions
+                 if n in _vis or n == current or n == data.get("start")}
+    else:
+        shown = set(positions)
 
     # エッジ(全遷移先へ。=283: 戻り(左向き)=点線、それ以外=実線。
     # =341: 往復のあるペアは1本の両矢印(実線)にまとめる)
@@ -704,6 +719,10 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
     if hide_edges:
         # =343: 通った向きだけ残す。両方通っていれば従来どおり両矢印になる
         arrows = {k: v for k, v in arrows.items() if k in seen}
+    if hide_unvisited:
+        # =367: 両端とも描くイベントの矢印だけ(通った矢印の端は到達済みのはず)
+        arrows = {k: v for k, v in arrows.items()
+                  if k[0] in shown and k[1] in shown}
 
     def _fill_width(pair):
         """=341: その向きを辿っていれば緑・太線、でなければ通常の線。"""
@@ -732,7 +751,8 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
         x2, y2 = positions[tgt]
         fill, width = _fill_width((src, tgt))
         # =342: 両端以外のノードの中心。これを跨ぐときだけ弧になる
-        others = [p for n, p in positions.items() if n not in (src, tgt)]
+        others = [p for n, p in positions.items()
+                  if n not in (src, tgt) and n in shown]
         if both:
             back_fill, back_width = _fill_width((tgt, src))
             _edge_line(c, x1, y1, x2, y2, r, (), fill, width,
@@ -746,6 +766,8 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
     glow = set(glow or ())
     visited = set(visited or ())
     for idx, (ev_id, (nx, ny)) in enumerate(positions.items()):
+        if ev_id not in shown:          # =367: 未到達のイベントは描かない
+            continue
         ev = data["events"][ev_id]
         has_states = "states" in ev
         # =124: 塗りはカスタム色(color)+減光/明度アップで決める。

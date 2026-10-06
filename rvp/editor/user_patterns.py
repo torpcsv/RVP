@@ -1,6 +1,8 @@
 """ユーザーパターン編集ポップアップ(UserPatternDialog)。"""
 from __future__ import annotations
 
+from .. import wintitle
+
 import customtkinter as ctk
 import os
 import tkinter as tk
@@ -208,6 +210,7 @@ class UserPatternDialog(ctk.CTkToplevel):
                       border_color=MUTED, text_color=("gray20", "gray85"),
                       command=lambda: done(False)).pack(side="left", padx=4)
         win.transient(self)
+        wintitle.schedule_fix_titlebar(win)   # =369: ダークでタイトルバーが白くなる対策
         try:
             win.grab_set()
         except Exception:

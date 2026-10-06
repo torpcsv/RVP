@@ -124,7 +124,8 @@ class TrackRowsMixin:
         # 種別を変えたら未選択時のプレースホルダ(funscript / CSV)を更新する
         type_menu.configure(
             command=lambda _v, e=entry: (self._update_track_row(e),
-                                         self._on_tracks_changed()))
+                                         self._on_tracks_changed(),
+                                         self._notify_track_type_changed(e)))
         ctk.CTkButton(r_top, text="✕", width=24, height=24,
                       fg_color="transparent", text_color="#e05a5a",
                       hover_color=("gray85", "gray28"),
@@ -213,6 +214,26 @@ class TrackRowsMixin:
         _remember_dialog_dir(path)
         entry["fs_path"] = _safe_relpath(path, self.base_dir)
         self._update_track_row(entry)
+        self._notify_device_link([entry["type_var"].get()])   # =354
+
+    def _notify_device_link(self, ttypes):
+        """=354: スクリプトを紐づけたことを編集画面へ知らせる。
+
+        編集画面(owner._auto_assign_device)が、その種別のデバイス担当が
+        「なし」ならこの行のチャンネルを担当にする(他のチャンネルが担当なら
+        何もしない)。動画アイテムは対象外(動画chの既定は =239 の仕組み)。
+        """
+        if getattr(self, "is_video", False):
+            return
+        ch_id = getattr(getattr(self, "reorder_host", None), "ch_id", None)
+        fn = getattr(self.owner, "_auto_assign_device", None)
+        if ch_id and callable(fn):
+            fn(list(ttypes), ch_id)
+
+    def _notify_track_type_changed(self, entry):
+        """=354: ファイルを選んだ行の種別を変えたら、新しい種別で知らせる。"""
+        if entry.get("fs_path"):
+            self._notify_device_link([entry["type_var"].get()])
 
     def dropped_track_hit(self, x: int, y: int):
         """=278: 落下点(スクリーン座標)が手動トラック行の上ならその種別を返す。
@@ -270,12 +291,14 @@ class TrackRowsMixin:
                 e["fs_path"] = rel
                 self._update_track_row(e)
                 self._on_tracks_changed()
+                self._notify_device_link([ttype])   # =354
                 return
         if len(self.track_rows) >= self._track_type_capacity():
             return
         self._add_track_row(ttype, rel)
         self._update_mode_ui()
         self._on_tracks_changed()
+        self._notify_device_link([ttype])   # =354
 
     def _delete_track_row(self, entry):
         if getattr(self, "is_script", False) and len(self.track_rows) <= 1:

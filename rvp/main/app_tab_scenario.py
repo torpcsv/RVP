@@ -232,6 +232,7 @@ class _RVPAppTabScenarioMixin:
             self._scenario_has_device = True     # =150 未読込は5画面へ戻す
             self._apply_play_pages()
             self.bg_art.set_scenario(None)       # =262 背景イラストを外す
+            self._sync_event_skip_visible()      # =366 隠していた◀◀/▶▶を戻す
             messagebox.showerror(
                 "RVP",
                 tr('シナリオファイルの読み込みに失敗しました:\n{0}').format(e)
@@ -248,7 +249,8 @@ class _RVPAppTabScenarioMixin:
         self._scenario_has_choices = any(
             ev.next_choice or ev.has_state_choice   # =275 ステート移行の選択肢
             for ev in sc.events.values())
-        self._sync_autoselect_visible()      # =61: 操作バーのチェック
+        self._sync_autoselect_visible()      # =61: 操作バーのチェック(=366)
+        self._sync_event_skip_visible()      # =366: ◀◀/▶▶ の行
         # =150: デバイストラックが皆無のシナリオなら、再生タブを3画面
         # (①再生/②イベント遷移/③変数・イベントログ)構成へ切り替える。
         self._scenario_has_device = self._scan_scenario_has_device(sc)

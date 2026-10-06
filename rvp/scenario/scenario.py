@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .load import _ScenarioLoadMixin
-from .model import (BackgroundSpec, EventMapSpec, ScenarioEvent,  # noqa: F401
+from .model import (BackgroundSpec, EventMapSpec, PlayControlsSpec, ScenarioEvent,  # noqa: F401
                     VarDecl)
 
 
@@ -41,3 +41,5 @@ class Scenario(_ScenarioLoadMixin):
     # =343: イベント遷移図のネタバレ防止(トップレベル "event_map")。
     # 省略=None=従来どおり全部見える。再生タブの図だけに効く。
     event_map: "EventMapSpec | None" = None
+    # =366: 再生タブの操作部品を隠す(トップレベル "play_controls")。省略=None
+    play_controls: "PlayControlsSpec | None" = None

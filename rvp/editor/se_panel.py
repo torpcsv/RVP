@@ -364,6 +364,11 @@ class _ScenarioEditorPanelMixin:
             justify="right")
         self.choice_tsec_label = ctk.CTkLabel(
             tlim_row, text=tr("秒"), font=ctk.CTkFont(size=11), text_color=TEXT_MUTED)
+        # =357: 残り時間を「??:??」と伏せる(「時間指定」のときだけ出す=Q8)
+        self.choice_hrem_var = tk.BooleanVar(value=False)
+        self.choice_hrem_check = ctk.CTkCheckBox(
+            tlim_row, text=tr("残り時間を隠す"), variable=self.choice_hrem_var,
+            font=ctk.CTkFont(size=12), checkbox_width=18, checkbox_height=18)
 
         # デフォルト遷移先(タイムアウト時・▶▶スキップ時の共通の行き先)
         dflt_row = ctk.CTkFrame(self.choice_inner, fg_color="transparent")
@@ -1059,6 +1064,11 @@ class _ScenarioEditorPanelMixin:
             fg_color=_clr.ACCENT, hover_color=_clr.ACCENT_HOVER,
             command=self._bgm_add_items)
         self.bgm_add_btn.pack(side="left")
+        # =362: 「(D&D可)」(=256 から BGM ブロックへの D&D は使えたが手がかりが
+        # 無かった。チャンネル枠 =160 と同じ見た目・D&D が使える環境でだけ出す)
+        self.bgm_dnd_hint = ctk.CTkLabel(
+            bctl, text=tr("(D&D可)"), font=ctk.CTkFont(size=11),
+            text_color=TEXT_MUTED, anchor="w")
         self.bgm_order_var = tk.StringVar(value=tr("順番に再生"))
         self.bgm_order_menu = CTkOptionMenu(
             bctl, variable=self.bgm_order_var, width=150, height=26,
@@ -1091,3 +1101,5 @@ class _ScenarioEditorPanelMixin:
         # ===== 背景(=347): BGM ブロックの下。background_enabled ON のとき
         # だけ _apply_background_enabled が pack する =====
         self._build_bg_box(p)
+        # ===== =358/=359: 再生タブの表示制限(BGM・背景ブロックの下の1行) =====
+        self._build_playui_row(p)

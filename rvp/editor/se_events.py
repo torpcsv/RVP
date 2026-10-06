@@ -273,6 +273,7 @@ class _ScenarioEditorEventsMixin:
                 has_video=_raw_has_video(ev.get("channels")))
             self._load_bgm(ev.get("bgm"))   # =256
             self._load_background(ev.get("background"))   # =347
+            self._load_playui(ev)                          # =358/=359
             channels = ev.get("channels", {})
             # イベント終了条件(全ch終了 / 指定ch終了 / 合計時間)。「委譲」は
             # ステート形式専用なので通常イベントの選択肢には出さない(相関制御)。
@@ -357,6 +358,8 @@ class _ScenarioEditorEventsMixin:
             # 読み込みエラーになる書式なので、残っていれば落とす)
             ev.pop("bgm", None)
             ev.pop("background", None)      # =347: 同上(背景)
+            for k in self.PLAYUI_KEYS:      # =358/=359: 同上
+                ev.pop(k, None)
             # イベント終了条件(UIで表せない変数指定は元の値をそのまま保持)
             if not getattr(self, "ev_end_locked", False):
                 choice = self.ev_end_var.get()
@@ -581,6 +584,8 @@ class _ScenarioEditorEventsMixin:
             ev["background"] = bg
         else:
             ev.pop("background", None)
+        # =358/=359: 再生タブの表示制限(音声なしは書かない)
+        self._collect_playui(ev, noaudio=not channels)
         if self.evend_var.get() == self.EVEND_INFINITE:
             ev["end"] = {"type": "none"}   # =168
         elif end_channel is not None:

@@ -532,6 +532,13 @@ class DeviceGraph(tk.Canvas):
         view = pts[lo:hi]
         if not view:
             return
+        pre = seg.get("pre")
+        pre_used = pre is not None and lo_t < times[0]
+        if pre_used:
+            # =355: rotate/vibration は最初の指示まで停止(=271)。窓の左端から
+            # 最初の指示までを停止の値の線でつなぐ(従来はここに何も描かず、
+            # 最初の指示の時刻から線が始まっていた)
+            view = [(lo_t, float(pre))] + view
         step = (seg["kind"] == "step")
         # =104: 前段の粗間引き。可視点が1pxあたり6点を超えるときはストライドで
         # 落としてから処理する(境界補間・エンベロープの入力として1pxに
@@ -567,6 +574,13 @@ class DeviceGraph(tk.Canvas):
                     b[0] = p
                 elif p > b[1]:
                     b[1] = p
+            if pre_used and times[0] < hi_t:
+                # =355: 停止の区間は点が無く、バケツ同士を直線で結ぶと停止の値
+                # から最初の指示へ斜めに見える。最初の指示の1px手前まで停止の
+                # 値を置き、そこから直角に立ち上がるようにする
+                pf = int(base + times[0] * ppm) - 1
+                if pf not in buckets and pf > min(buckets):
+                    buckets[pf] = [float(pre), float(pre)]
             coords = []
             for px in sorted(buckets):
                 pmin, pmax = buckets[px]

@@ -545,3 +545,73 @@ def clear():
     _PALETTE_VALUES.clear()
     ACTIVE = None
     PALETTE = None
+
+
+_theme_value_cache = None
+
+
+def _theme_values() -> set:
+    """テーマの色写像(live_color)が役割として拾う値の集合(=363 後の修正)。"""
+    global _theme_value_cache
+    if _theme_value_cache is None:
+        vals = set()
+        for name in THEMES:
+            for v in build_palette(name).values():
+                if isinstance(v, str) and v.startswith("#"):
+                    vals.add(v)
+        _theme_value_cache = vals
+    return _theme_value_cache | set(_ROLE_OF) | set(_CLASS_BOUND)
+
+
+def user_color(hex_color: str) -> str:
+    """ユーザーが選んだ色を、テーマの色写像に巻き込まれない値で返す。
+
+    パステル系テーマ+ライトでは、CTk が解決した色を `live_color` が
+    「役割」で引き当ててテーマの色へ写す。#111111/#ffffff はボタン文字色
+    (BTN_TEXT)の値でもあるため、選択肢の文字色(黒系)が白に化けていた
+    (=363 の実機 FB・パステルピンク)。役割表に載っている値なら青成分を
+    1 だけずらして(見た目は同じ)写像の対象から外す。
+    """
+    if not isinstance(hex_color, str) or len(hex_color) != 7 \
+            or not hex_color.startswith("#"):
+        return hex_color
+    taken = _theme_values()
+    c = hex_color
+    try:
+        r, g, b = (int(c[i:i + 2], 16) for i in (1, 3, 5))
+    except ValueError:
+        return hex_color
+    step = -1 if b > 0 else 1
+    while c in taken or c.upper() in taken or c.lower() in taken:
+        b = max(0, min(255, b + step))
+        c = "#{:02x}{:02x}{:02x}".format(r, g, b)
+        if b in (0, 255):
+            step = -step
+    return c
+
+
+def ink_for(hex_color: str) -> str:
+    """=363: 塗り色に載せる文字色(黒系/白系のうちコントラスト比が大きい方)。
+
+    テーマの色写像に巻き込まれないよう `user_color` を通した値を返す。
+    """
+    try:
+        ink = "#111111" if contrast(hex_color, "#111111") >= \
+            contrast(hex_color, "#ffffff") else "#ffffff"
+    except Exception:
+        ink = "#111111"
+    return user_color(ink)
+
+
+def shade(hex_color: str, factor: float) -> str:
+    """=363: 色を暗く(factor<1)/明るく(factor>1)する。"#RRGGBB" を返す。"""
+    try:
+        r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+    except Exception:
+        return hex_color
+    if factor <= 1:
+        r, g, b = (int(round(c * factor)) for c in (r, g, b))
+    else:
+        t = min(1.0, factor - 1.0)
+        r, g, b = (int(round(c + (255 - c) * t)) for c in (r, g, b))
+    return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, c)) for c in (r, g, b)))

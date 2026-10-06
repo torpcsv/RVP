@@ -1,6 +1,8 @@
 """アイテムレビュー: 編集モード(構築・対象トラック・種別・サブ表示・数値欄・保存・未保存確認)(mixin)。"""
 from __future__ import annotations
 
+from .. import wintitle
+
 import customtkinter as ctk
 import os
 import time
@@ -1525,6 +1527,7 @@ class _ItemReviewEditMixin:
         dlg.title(tr("確認"))
         dlg.resizable(False, False)
         dlg.transient(self)
+        wintitle.schedule_fix_titlebar(dlg)   # =369: ダークでタイトルバーが白くなる対策
         result = {"key": None}
         ctk.CTkLabel(dlg, text=message, font=ctk.CTkFont(size=12),
                      wraplength=380, justify="left"

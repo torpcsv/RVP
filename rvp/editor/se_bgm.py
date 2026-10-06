@@ -113,6 +113,18 @@ class _ScenarioEditorBgmMixin:
         for p in ok:
             self._bgm_append_row(_safe_relpath(p, self.base_dir))
 
+    def set_bgm_dnd_hint(self, on: bool):
+        """BGM ブロックの「(D&D可)」の表示/非表示(=362)。"""
+        try:
+            if on:
+                if not self.bgm_dnd_hint.winfo_manager():
+                    self.bgm_dnd_hint.pack(side="left", padx=(6, 0),
+                                           after=self.bgm_add_btn)
+            else:
+                self.bgm_dnd_hint.pack_forget()
+        except Exception:
+            pass
+
     def _load_bgm(self, raw):
         """ノードの "bgm" 値をBGMブロックへ反映する(=256)。
 

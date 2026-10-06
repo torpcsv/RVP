@@ -21,14 +21,18 @@ class _ScenarioEditorHistoryMixin:
     def _hist_key_live(self):
         """比較用キー(生の data から。title はファイル名追従なので除外)。"""
         d = {k: v for k, v in self.data.items() if k != "title"}
+        # =353①: dict の == は順序を見ないので、変数の並び替えだけの変更も
+        # 1段として積めるよう、変数名の並びを比較キーに加える
         return (d, self._detail_text, self.device_enabled, self.bgm_enabled,
-                self.background_enabled)
+                self.background_enabled,
+                tuple(self.data.get("vars") or {}))
 
     @staticmethod
     def _hist_key_snap(snap: dict):
         d = {k: v for k, v in snap["data"].items() if k != "title"}
         return (d, snap["detail"], snap["device"], snap["bgm"],
-                snap.get("bg", False))
+                snap.get("bg", False),
+                tuple(snap["data"].get("vars") or {}))   # =353①
 
     def _hist_reset(self):
         """履歴を空にして現在を起点にする(起動時)。"""

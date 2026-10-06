@@ -351,3 +351,21 @@ def parse_node_background(ctx, raw, where: str):
         return NodeBackground(mode="off", fade=float(fade))
     return NodeBackground(mode="set", spec=parse_bg_file_dim(ctx, raw, w),
                           fade=float(fade))
+
+
+def parse_node_ui(ctx, raw, where: str) -> dict:
+    """ノードの再生タブ表示の制限を解析する(=358/=359)。
+
+    "hide_time": true  … 再生タブ左上の再生時間を「??:??.? / ??:??.?」と伏せる
+    "no_seek": true    … シーク操作(シークバー・↺10/↻10・グラフの右ダブル
+                          クリック)を禁止する
+    どちらも省略=false(前のノードから引き継がない)。EventState の引数として返す。
+    """
+    out = {}
+    for key, attr in (("hide_time", "hide_time"), ("no_seek", "no_seek")):
+        v = raw.get(key, False) if isinstance(raw, dict) else False
+        if not isinstance(v, bool):
+            raise ValueError(
+                tr("{0}: {1} は true / false で指定してください").format(where, key))
+        out[attr] = v
+    return out

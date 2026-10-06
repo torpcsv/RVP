@@ -921,6 +921,7 @@ class ChannelSection(ctk.CTkFrame):
         )
         if paths:
             _remember_dialog_dir(paths[0])
+        n0 = len(self.rows)
         for p in paths:
             rel = _safe_relpath(p, self.base_dir)   # 別ドライブでも落ちない
             self._append_row(rel)
@@ -934,6 +935,7 @@ class ChannelSection(ctk.CTkFrame):
             if self.owner is not None \
                     and hasattr(self.owner, "_on_channel_enabled"):
                 self.owner._on_channel_enabled()
+        self._auto_assign_devices(self.rows[n0:])   # =354
 
     def add_dropped_audio(self, paths):
         """D&Dで落とされた音声ファイル群をこのチャンネルへ登録する(=44)。
@@ -951,6 +953,7 @@ class ChannelSection(ctk.CTkFrame):
               and os.path.splitext(p)[1].lower() in (".wav", ".mp3")]
         if not ok:
             return
+        n0 = len(self.rows)
         for p in ok:
             self._append_row(_safe_relpath(p, self.base_dir))
         self._apply_row_correlations()
@@ -961,6 +964,7 @@ class ChannelSection(ctk.CTkFrame):
             if self.owner is not None \
                     and hasattr(self.owner, "_on_channel_enabled"):
                 self.owner._on_channel_enabled()
+        self._auto_assign_devices(self.rows[n0:])   # =354
 
     def _add_scripts(self):
         """スクリプトのみアイテム(funscript/CSV)を追加する。
@@ -981,6 +985,7 @@ class ChannelSection(ctk.CTkFrame):
         if paths:
             _remember_dialog_dir(paths[0])
         added = False
+        n0 = len(self.rows)
         for p in paths:
             ttype = _script_track_type(p)
             if ttype is None:
@@ -1000,6 +1005,7 @@ class ChannelSection(ctk.CTkFrame):
         if self.owner is not None \
                 and hasattr(self.owner, "_on_channel_enabled"):
             self.owner._on_channel_enabled()
+        self._auto_assign_devices(self.rows[n0:])   # =354
 
     def add_dropped_script(self, paths) -> bool:
         """D&Dで落とされた funscript/CSV をスクリプトのみアイテムとして登録(=65)。
@@ -1020,6 +1026,7 @@ class ChannelSection(ctk.CTkFrame):
                for r in self.rows):
             return False
         added = False
+        n0 = len(self.rows)
         for p in paths:
             if not os.path.isfile(p):
                 continue
@@ -1040,7 +1047,31 @@ class ChannelSection(ctk.CTkFrame):
         if self.owner is not None \
                 and hasattr(self.owner, "_on_channel_enabled"):
             self.owner._on_channel_enabled()
+        self._auto_assign_devices(self.rows[n0:])   # =354
         return True
+
+    def _auto_assign_devices(self, rows):
+        """=354: 追加した行が紐づけたスクリプトの種別を編集画面へ知らせる。
+
+        自動モード(命名ルール)の行は見つかった funscript/CSV の種別、
+        手動モード(スクリプトのみアイテム等)はファイルを持つトラックの種別。
+        担当が「なし」の種別だけがこのチャンネルになる(owner 側で判定)。
+        動画アイテムは対象外。
+        """
+        fn = getattr(self.owner, "_auto_assign_device", None)
+        if not callable(fn):
+            return
+        types = []
+        for r in rows:
+            if getattr(r, "is_video", False):
+                continue
+            if r.mode == "auto":
+                types += [t for t, _p in r._resolve_auto()]
+            else:
+                types += [e["type_var"].get() for e in r.track_rows
+                          if e.get("fs_path")]
+        if types:
+            fn(types, self.ch_id)
 
     def _add_videos(self):
         """動画アイテムを追加する(=52)。複数選べば抽選/プレイリストになる。"""

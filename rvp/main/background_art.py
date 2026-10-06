@@ -84,6 +84,9 @@ class BackgroundArt:
         self._src = None                  # dim焼き込み済みPIL画像(原寸)
         self._src_key = None              # (path, dim)
         self._photo = None                # ImageTk.PhotoImage(拡縮後)
+        self._scaled = None               # =363: _photo の元の PIL 画像
+        # =363: 覆いを描き直した直後に呼ぶ(③の半透明の選択肢を描き直す)
+        self.solo_after_mirror = None
         self._photo_h = 0
         self._x0 = 0
         self._rebuild_job = None
@@ -280,8 +283,22 @@ class BackgroundArt:
         return bool(self.shown and self._under is not None
                     and (self._photo is not None or self._xf_img is not None))
 
-    def enter_solo(self, on_exit=None) -> bool:
-        """=351: UI を覆ってイラストだけを見せる。入れたら True。"""
+    @property
+    def solo_cover(self):
+        """=356: 覆い(tk.Canvas)。表示中でなければ None。
+
+        ③「画像と選択肢」の選択肢バーは、この覆いの子として最下部へ置く
+        (覆いの図形は `_mirror_solo` が delete("all") で描き直すが、子
+        ウィジェットは図形ではないので消えない)。
+        """
+        return self._solo
+
+    def enter_solo(self, on_exit=None, on_click=None) -> bool:
+        """=351: UI を覆ってイラストだけを見せる。入れたら True。
+
+        =356: `on_click` を渡すと、覆いの左クリックで元へ戻す代わりにそれを
+        呼ぶ(②→③→① の段階送りはアプリ側が決める)。省略時は従来どおり戻す。
+        """
         if self.solo:
             return True
         if not self.can_solo():
@@ -297,7 +314,11 @@ class BackgroundArt:
             return False
         self._solo = cover
         self._solo_on_exit = on_exit
-        cover.bind("<Button-1>", lambda _e: self.exit_solo())
+        if callable(on_click):
+            # =363: クリック位置で③の選択肢ボタンを判定するので event を渡す
+            cover.bind("<Button-1>", lambda e: on_click(e))
+        else:
+            cover.bind("<Button-1>", lambda _e: self.exit_solo())
         try:
             # 入力欄にフォーカスが残っていると Space 等が文字として入るので
             # 覆いへ移す(root の <space>/<Escape> は bindtags で届く=Q5)
@@ -339,6 +360,24 @@ class BackgroundArt:
                 c.create_image(self._x0, 0, anchor="nw", image=self._photo)
         except tk.TclError:
             pass
+        cb = self.solo_after_mirror
+        if callable(cb):
+            try:
+                cb()
+            except Exception:
+                logging.getLogger(__name__).exception("solo_after_mirror")
+
+    def solo_base_image(self):
+        """=363: 覆いに見えている絵の PIL 画像と、その左上の x を返す。
+
+        クロスフェード中は合成フレーム(x=0)、通常は拡縮画像(x=_x0)。
+        画像が無ければ (None, 0)(下地は黒)。
+        """
+        if self._xf_img is not None and getattr(self, "_xf_photo", None) is not None:
+            return self._xf_img, 0
+        if self._scaled is not None and self._photo is not None:
+            return self._scaled, int(self._x0)
+        return None, 0
 
     def _img_alpha(self, dim=None) -> float:
         """画像側のalpha。基準=1-UI不透明度(弱0.12/中0.24/強0.38)。
@@ -807,6 +846,7 @@ class BackgroundArt:
                 scaled = self._src.resize((sw, sh),
                                           PILImage.Resampling.LANCZOS)
                 self._photo = PILImageTk.PhotoImage(scaled)
+                self._scaled = scaled             # =363: ③の合成用に PIL も保持
                 self._photo_h = sh
             except Exception as e:
                 logging.getLogger(__name__).warning(

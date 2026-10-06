@@ -124,8 +124,9 @@ class OpsDialog(ctk.CTkToplevel):
             values=self.all_names or [""],
             fg_color=("gray75", "gray28"), button_color=("gray70", "gray33"))
         tgt_menu.pack(side="left", padx=4)
-        ctk.CTkLabel(row, text="←", font=ctk.CTkFont(size=12),
-                     text_color=TEXT_MUTED).pack(side="left")
+        arrow = ctk.CTkLabel(row, text="←", font=ctk.CTkFont(size=12),
+                             text_color=TEXT_MUTED)
+        arrow.pack(side="left")
         # 値エリア: set/add=単一の値 / roll=min〜max の2欄(種別で出し分け)
         val_area = ctk.CTkFrame(row, fg_color="transparent")
         val_area.pack(side="left", padx=4)
@@ -158,7 +159,8 @@ class OpsDialog(ctk.CTkToplevel):
             fg_color=("gray75", "gray28"), button_color=("gray70", "gray33"))
         if kind == "eval" and "value" in when:
             value.set(when.get("value"))
-        entry.update({"tgt_var": tgt_var, "tgt_menu": tgt_menu, "value": value,
+        entry.update({"arrow": arrow, "val_area": val_area,
+                      "tgt_var": tgt_var, "tgt_menu": tgt_menu, "value": value,
                       "roll_min": roll_min, "roll_sep": roll_sep,
                       "roll_max": roll_max,
                       "cond_var": cond_var, "cond_menu": cond_menu,
@@ -206,6 +208,12 @@ class OpsDialog(ctk.CTkToplevel):
                   entry["roll_max"], entry["cond_menu"],
                   entry["cond_op_menu"]):
             w.pack_forget()
+        # =353②: 中身の無い値エリア(再生位置)は外す。空の CTkFrame は既定の
+        # 200×200px を取り、行が縦に間延びして上に空白ができていた
+        if kind == "pos":
+            entry["val_area"].pack_forget()
+        elif not entry["val_area"].winfo_manager():
+            entry["val_area"].pack(side="left", padx=4, after=entry["arrow"])
         if kind == "roll":
             entry["roll_min"].pack(side="left")
             entry["roll_sep"].pack(side="left", padx=2)
@@ -401,14 +409,16 @@ class PlayOptionsDialog(ctk.CTkToplevel):
 
     self.result:
       None = キャンセル(変更なし)、それ以外は
-      {"event_map":  None | {"mask_names": bool, "hide_edges": bool}}
+      {"event_map":  None | {"mask_names": bool, "hide_edges": bool},
+       "play_controls": None | {"hide_event_skip": bool,
+                                "hide_autoselect": bool}}   (=366)
       (None はそのキーごと削除)
     """
 
     FILETYPES_EXT = "*.png *.jpg *.jpeg *.webp *.bmp *.gif"
-    W, H = 600, 250          # =347: 背景セクションを外した
+    W, H = 600, 410          # =347: 背景を外した / =366 操作部品 / =367 完全に隠す
 
-    def __init__(self, master, raw, base_dir: str, map_raw=None):
+    def __init__(self, master, raw, base_dir: str, map_raw=None, pc_raw=None):
         super().__init__(master)
         self.title(tr("再生オプション"))
         self.result = None
@@ -421,34 +431,59 @@ class PlayOptionsDialog(ctk.CTkToplevel):
         # へ移ったので、このダイアログはイベント遷移図だけになった。
         # 引数 raw は互換のため受け取るが使わない。
         del raw
-        ctk.CTkLabel(
-            self, text=tr("イベント遷移図"),
-            font=ctk.CTkFont(size=13, weight="bold"), anchor="w",
-        ).pack(fill="x", padx=14, pady=(12, 0))
-        ctk.CTkLabel(
-            self, text=tr("再生タブの図をどこまで見せるかの指定です。"
-                          "「再生中に図はちょっと見たいが、この先のネタバレや"
-                          "まだ選んでいない選択肢は見せたくない」ときに使います"
-                          "(編集画面の図には効きません)。"),
-            font=ctk.CTkFont(size=12), text_color=TEXT_MUTED,
-            wraplength=560, justify="left", anchor="w",
-        ).pack(fill="x", padx=14, pady=(2, 6))
-        self.mask_names_var = tk.BooleanVar(
-            value=bool(isinstance(map_raw, dict)
-                       and map_raw.get("mask_names")))
-        self.hide_edges_var = tk.BooleanVar(
-            value=bool(isinstance(map_raw, dict)
-                       and map_raw.get("hide_edges")))
-        ctk.CTkCheckBox(
-            self, text=tr("未到達のイベント名を伏せる(到達済みと現在地は表示)"),
-            variable=self.mask_names_var, font=ctk.CTkFont(size=12),
-            fg_color=_clr.ACCENT, hover_color=_clr.ACCENT_HOVER,
-        ).pack(anchor="w", padx=18, pady=2)
-        ctk.CTkCheckBox(
-            self, text=tr("未通過の矢印を隠す(通った矢印だけ描く)"),
-            variable=self.hide_edges_var, font=ctk.CTkFont(size=12),
-            fg_color=_clr.ACCENT, hover_color=_clr.ACCENT_HOVER,
-        ).pack(anchor="w", padx=18, pady=2)
+
+        def head(text, top):
+            ctk.CTkLabel(
+                self, text=text,
+                font=ctk.CTkFont(size=13, weight="bold"), anchor="w",
+            ).pack(fill="x", padx=14, pady=(top, 0))
+
+        def note(text):
+            ctk.CTkLabel(
+                self, text=text, font=ctk.CTkFont(size=12),
+                text_color=TEXT_MUTED, wraplength=560, justify="left",
+                anchor="w",
+            ).pack(fill="x", padx=14, pady=(2, 6))
+
+        def check(text, var, command=None):
+            cb = ctk.CTkCheckBox(
+                self, text=text, variable=var, font=ctk.CTkFont(size=12),
+                fg_color=_clr.ACCENT, hover_color=_clr.ACCENT_HOVER,
+                command=command)
+            cb.pack(anchor="w", padx=18, pady=2)
+            return cb
+
+        # =367: 並びと文言はユーザー指定(再生タブ → イベント遷移図の順)
+        # ---- 再生タブ(=366 トップレベル "play_controls") ----
+        head(tr("再生タブ"), 12)
+        note(tr("シナリオ再生中に視聴者に使わせたくない機能を非表示にします。"))
+        pc = pc_raw if isinstance(pc_raw, dict) else {}
+        self.hide_event_skip_var = tk.BooleanVar(
+            value=bool(pc.get("hide_event_skip")))
+        self.hide_autoselect_var = tk.BooleanVar(
+            value=bool(pc.get("hide_autoselect")))
+        check(tr("「◀◀/▶▶」ボタン(イベントの巻き戻し/スキップ)を表示しない"),
+              self.hide_event_skip_var)
+        check(tr("「自動選択(ランダム)」チェックを表示しない"),
+              self.hide_autoselect_var)
+
+        # ---- イベント遷移図(=343 トップレベル "event_map") ----
+        head(tr("イベント遷移図"), 14)
+        note(tr("シナリオ再生中のネタバレ防止の為、イベント遷移図の見せたくない"
+                "範囲を非表示にします。"))
+        mr = map_raw if isinstance(map_raw, dict) else {}
+        self.mask_names_var = tk.BooleanVar(value=bool(mr.get("mask_names")))
+        self.hide_edges_var = tk.BooleanVar(value=bool(mr.get("hide_edges")))
+        self.hide_unvisited_var = tk.BooleanVar(
+            value=bool(mr.get("hide_unvisited")))
+        self.mask_names_check = check(
+            tr("未到達のイベント名を「？」表示にする"), self.mask_names_var)
+        self.hide_edges_check = check(
+            tr("未通過の矢印を隠す"), self.hide_edges_var)
+        self.hide_unvisited_check = check(
+            tr("未到達のイベント・未通過の矢印を完全に隠す"),
+            self.hide_unvisited_var, command=self._sync_map_checks)
+        self._sync_map_checks()
 
         self.err_label = ctk.CTkLabel(
             self, text="", font=ctk.CTkFont(size=12, weight="bold"),
@@ -470,16 +505,37 @@ class PlayOptionsDialog(ctk.CTkToplevel):
         _front_window(self)
         self.grab_set()
 
+    def _sync_map_checks(self):
+        """=367: 「完全に隠す」がオンなら「？」表示・「矢印を隠す」は非活性
+        (○そのものが消え矢印も消えるため)。チェックの値は残す(オフに
+        戻せば元の指定が効く)。"""
+        st = "disabled" if self.hide_unvisited_var.get() else "normal"
+        for cb in (self.mask_names_check, self.hide_edges_check):
+            cb.configure(state=st)
+
     def _event_map_result(self):
-        """=343: 2つともOFFならキーごと削除(None)。"""
+        """=343: すべてOFFならキーごと削除(None)。=367: hide_unvisited を追加。"""
         mask = bool(self.mask_names_var.get())
         hide = bool(self.hide_edges_var.get())
-        if not mask and not hide:
+        unv = bool(self.hide_unvisited_var.get())
+        if not mask and not hide and not unv:
             return None
-        return {"mask_names": mask, "hide_edges": hide}
+        out = {"mask_names": mask, "hide_edges": hide}
+        if unv:
+            out["hide_unvisited"] = True
+        return out
+
+    def _play_controls_result(self):
+        """=366: 2つともOFFならキーごと削除(None)。"""
+        skip = bool(self.hide_event_skip_var.get())
+        auto = bool(self.hide_autoselect_var.get())
+        if not skip and not auto:
+            return None
+        return {"hide_event_skip": skip, "hide_autoselect": auto}
 
     def _on_save(self):
-        self.result = {"event_map": self._event_map_result()}
+        self.result = {"event_map": self._event_map_result(),
+                       "play_controls": self._play_controls_result()}
         self.destroy()
 
     def _on_cancel(self):
@@ -638,6 +694,13 @@ class VarsDialog(ctk.CTkToplevel):
         entry.update({"init_var": init_var, "min_var": min_var,
                       "max_var": max_var, "min_entry": min_entry,
                       "max_entry": max_entry})
+        # =353①: 並び順を変える「↑」(変数操作ダイアログの行と同じ見た目)。
+        # 並び順は JSON の vars の順=変数の選択メニューや再生タブの表示順
+        ctk.CTkButton(row, text="↑", width=24, height=24,
+                      fg_color="transparent", text_color=TEXT_MUTED,
+                      hover_color=("gray85", "gray28"),
+                      command=lambda e=entry: self._move_var_up(e)
+                      ).pack(side="left")
         ctk.CTkButton(row, text="✕", width=24, height=24,
                       fg_color="transparent", text_color="#e05a5a",
                       hover_color=("gray85", "gray28"),
@@ -651,6 +714,18 @@ class VarsDialog(ctk.CTkToplevel):
         state = "disabled" if entry["type_var"].get() == tr("文字列") else "normal"
         entry["min_entry"].configure(state=state)
         entry["max_entry"].configure(state=state)
+
+    def _move_var_up(self, entry):
+        """=353①: 変数の行を1つ上へ(先頭では何もしない)。"""
+        i = self.var_rows.index(entry)
+        if i == 0:
+            return
+        rows = self.var_rows
+        rows[i - 1], rows[i] = rows[i], rows[i - 1]
+        # 入れ替えた行を相手の前へ詰め直す(他の行は動かさない)
+        entry["frame"].pack_forget()
+        entry["frame"].pack(fill="x", pady=1, before=rows[i]["frame"])
+        self._refresh_cond_names()   # 監視の条件の変数メニューも同じ順に
 
     def _delete_var_row(self, entry):
         self.var_rows.remove(entry)

@@ -57,6 +57,11 @@ class _ScenarioEditorBackgroundMixin:
             fg_color=_clr.ACCENT, hover_color=_clr.ACCENT_HOVER,
             command=self._bg_choose)
         self.bg_choose_btn.pack(side="left")
+        # =362: 「(D&D可)」(チャンネル枠の =160 と同じ見た目。D&D が使える
+        # 環境でだけ出す=`_refresh_dnd_hints`)
+        self.bg_dnd_hint = ctk.CTkLabel(
+            self.bg_set_row, text=tr("(D&D可)"), font=ctk.CTkFont(size=11),
+            text_color=TEXT_MUTED, anchor="w")
         self.bg_file_label = ctk.CTkLabel(
             self.bg_set_row, text=tr("(なし)"), font=ctk.CTkFont(size=12),
             text_color=TEXT_MUTED, anchor="w")
@@ -123,6 +128,49 @@ class _ScenarioEditorBackgroundMixin:
         _remember_dialog_dir(path)
         self._bg_file = _safe_relpath(os.path.normpath(path), self.base_dir)
         self._refresh_bg_file_label()
+
+    def _bg_hit(self, x, y) -> bool:
+        """落下点(スクリーン座標)が背景ブロックの上か(=362 の D&D 用)。"""
+        try:
+            w = self.bg_box
+            if not w.winfo_ismapped():
+                return False
+            wx, wy = w.winfo_rootx(), w.winfo_rooty()
+            return (wx <= x < wx + w.winfo_width()
+                    and wy <= y < wy + w.winfo_height())
+        except Exception:
+            return False
+
+    def _bg_dropped_image(self, paths):
+        """D&D された画像を背景に設定する(=362)。
+
+        「画像を選ぶ…」と同じ拡張子のみ。複数なら先頭の1枚。3択が「指定」
+        以外なら自動で「指定」へ切り替える(BGM の D&D=256 と同じ流儀)。
+        対応外・実在しないファイルは黙って無視する(D&D の既存仕様)。
+        """
+        exts = tuple(e.lstrip("*") for e in BG_FILETYPES_EXT.split())
+        ok = [p for p in paths
+              if os.path.isfile(p) and os.path.splitext(p)[1].lower() in exts]
+        if not ok:
+            return
+        if self.bg_mode_var.get() != self.BG_SET:
+            self.bg_mode_var.set(self.BG_SET)
+            self._update_bg_ui()
+        _remember_dialog_dir(ok[0])
+        self._bg_file = _safe_relpath(os.path.normpath(ok[0]), self.base_dir)
+        self._refresh_bg_file_label()
+
+    def set_bg_dnd_hint(self, on: bool):
+        """背景ブロックの「(D&D可)」の表示/非表示(=362)。"""
+        try:
+            if on:
+                if not self.bg_dnd_hint.winfo_manager():
+                    self.bg_dnd_hint.pack(side="left", padx=(6, 0),
+                                          after=self.bg_choose_btn)
+            else:
+                self.bg_dnd_hint.pack_forget()
+        except Exception:
+            pass
 
     # ---------------- 読み書き ----------------
 

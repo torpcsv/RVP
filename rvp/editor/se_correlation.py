@@ -157,6 +157,8 @@ class _ScenarioEditorCorrelationMixin:
         noaudio = not any(s.enabled_var.get()
                           for s in self.channel_sections.values())
         multi = "states" in ev
+        # =358/=359: 音声なしノードでは再生タブの表示制限の行を隠す
+        self._update_playui_visibility(noaudio)
         # デバイス担当: 音声なしは「なし」固定(無効化)
         for ttype in DEVICE_TYPES:
             menu = self.device_menus.get(ttype)
@@ -329,6 +331,31 @@ class _ScenarioEditorCorrelationMixin:
                 menu.configure(values=[tr("なし")] + list(CHANNEL_IDS))
                 if not noaudio:
                     menu.configure(state="normal")
+
+    def _auto_assign_device(self, ttypes, ch_id: str):
+        """=354: スクリプトを紐づけた種別のデバイス担当を自動で決める。
+
+        ユーザー決定(Q1〜Q4 推奨どおり): 担当が「なし」の種別だけ ch_id に
+        する。他のチャンネルが担当なら何もしない(同じチャンネルでも何もしない)。
+        トラックを消しても「なし」へは戻さない。知らせは出さない(メニューの
+        表示が変わるだけ)。デバイス連動 OFF・無効チャンネル・メニューが
+        無効(音声なし)のときは何もしない。
+        """
+        if not getattr(self, "device_enabled", True):
+            return
+        sec = (getattr(self, "channel_sections", None) or {}).get(ch_id)
+        if sec is None or not sec.enabled_var.get():
+            return
+        none = tr("なし")
+        for ttype in ttypes:
+            var = self.device_vars.get(ttype)
+            menu = self.device_menus.get(ttype)
+            if var is None or menu is None:
+                continue
+            if str(menu.cget("state")) == "disabled":
+                continue
+            if var.get() == none:
+                var.set(ch_id)
 
     def _set_device_vars(self, device, channels: dict,
                          has_video: bool = False):

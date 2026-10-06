@@ -353,9 +353,33 @@ class EventMapSpec:
     """
     mask_names: bool = False
     hide_edges: bool = False
+    # =367: 未到達のイベント(○と名前)・未通過の矢印を**完全に隠す**。
+    # オンのときは mask_names/hide_edges より優先(それらの値は無視)
+    hide_unvisited: bool = False
 
     def any_on(self) -> bool:
-        return bool(self.mask_names or self.hide_edges)
+        return bool(self.mask_names or self.hide_edges or self.hide_unvisited)
+
+
+@dataclass
+class PlayControlsSpec:
+    """=366: 再生タブの操作部品を隠す(トップレベル "play_controls")。
+
+    JSON は
+      "play_controls": {"hide_event_skip": true, "hide_autoselect": true}
+    の1書式。どちらも省略=false(=従来どおり表示)。
+
+    - hide_event_skip: ◀◀(イベントの巻き戻し)/▶▶(スキップ)ボタンの行を隠す
+      (行ごと消して下を詰める。ショートカットは無いので操作自体ができない)
+    - hide_autoselect: 「自動選択(ランダム)」チェックを隠す。このシナリオの
+      再生中は自動選択をオフとして扱う(視聴者がオンにしていても)
+    作成者の指定がそのまま効く(視聴側では変えられない)。
+    """
+    hide_event_skip: bool = False
+    hide_autoselect: bool = False
+
+    def any_on(self) -> bool:
+        return bool(self.hide_event_skip or self.hide_autoselect)
 
 
 @dataclass
@@ -563,6 +587,10 @@ class EventState:
     # 「イベント/ステート直下の video」から「動画アイテムを持つチャンネル」へ
     # 移行した。旧形式のJSONは migrate_video_node が読み込み時に変換する。
     video_channel: str = ""       # 動画チャンネルのID(""=動画なし)
+    # =358: 再生タブ左上の再生時間を伏せる / =359: シーク操作を禁止する
+    # (どちらもこのノードにいる間だけ。前のノードから引き継がない)
+    hide_time: bool = False
+    no_seek: bool = False
 
     @property
     def has_video(self) -> bool:
@@ -777,6 +805,8 @@ class ChoiceEntry(NamedTuple):
     to_event: bool = False
     # =352: 表示条件(判定式の AND)。空=常に表示。選択肢を表示する瞬間に評価
     when: tuple = ()
+    # =363: ボタンの色 "#RRGGBB"(""=既定色)。表示専用
+    color: str = ""
 
 
 @dataclass
@@ -832,6 +862,8 @@ class ChoiceRule:
     all_hidden_to: str | None = None
     all_hidden_to_event: bool = False
     state_mode: bool = False
+    # =357: 再生タブの残り時間を「??:??」と伏せる(ログの制限秒数も伏せる)
+    hide_remaining: bool = False
 
     def entry_visible(self, e, vars_, visited_events=(),
                       visited_states=()) -> bool:

@@ -489,6 +489,15 @@ class _ScenarioEditorStatesMixin:
                 self.trans_fixed_menu.pack(side="left", padx=(6, 0))
             return
         self.trans_fixed_menu.pack_forget()
+        # =370: 移行先の行(trans_to_row)が隠れている間は、それを基準に
+        # pack(after=) すると TclError(isn't packed)になる。選択肢でステート
+        # 移行するステート(行を隠す)の次に、判定式で移行先を決めるステートを
+        # 開くと、移行先の読み込み(_trans_load_targets)が種類の切り替え
+        # (_update_trans_ui=行を戻す)より先に走るためここで落ち、パネルの
+        # 読み込みが途中で止まって前のステートの表示のまま残っていた
+        # (ユーザー報告「3-2 end」の「判定」)。行が隠れている間は出し入れを
+        # 見送る(_update_trans_ui が行を戻した後にこの関数を呼び直す)。
+        to_row_shown = bool(self.trans_to_row.winfo_manager())
         if cond_mode:
             self.trans_to_label.configure(text=tr("ステート移行先(判定式):"))
             self.trans_targets_frame.pack_forget()
@@ -497,7 +506,7 @@ class _ScenarioEditorStatesMixin:
             self.trans_else_row.pack_forget()
             if not self.strans_rows:
                 self._add_strans_row()
-            if not self.strans_cond_box.winfo_ismapped():
+            if to_row_shown and not self.strans_cond_box.winfo_manager():
                 self.strans_cond_box.pack(fill="x", pady=(0, 2),
                                           after=self.trans_to_row)
         else:
@@ -506,10 +515,10 @@ class _ScenarioEditorStatesMixin:
                 text=tr("ステート移行先(複数チェックで抽選):"))
             if not self.trans_targets_frame.winfo_ismapped():
                 self.trans_targets_frame.pack(side="left", padx=8)
-            if not self.trans_visited_row.winfo_ismapped():
+            if to_row_shown and not self.trans_visited_row.winfo_manager():
                 self.trans_visited_row.pack(fill="x", pady=(0, 2),
                                             after=self.trans_to_row)
-            if not self.trans_else_row.winfo_ismapped():
+            if to_row_shown and not self.trans_else_row.winfo_manager():
                 self.trans_else_row.pack(fill="x", pady=(0, 2),
                                          after=self.trans_visited_row)
             self._update_trans_visited_ui()
@@ -571,6 +580,7 @@ class _ScenarioEditorStatesMixin:
                           or self._auto_seek_channel(channels))
         self._load_bgm(st.get("bgm"))   # =256
         self._load_background(st.get("background"))   # =347
+        self._load_playui(st)                          # =358/=359
 
         # ステート開始時の変数操作(変数宣言があるときだけ表示)
         self._st_ops = list(st.get("on_start") or [])
@@ -847,6 +857,8 @@ class _ScenarioEditorStatesMixin:
             st["background"] = bg
         else:
             st.pop("background", None)
+        # =358/=359: 再生タブの表示制限(音声なしは書かない)
+        self._collect_playui(st, noaudio=not channels)
         if transition:
             st["transition"] = transition
         else:
@@ -1151,13 +1163,22 @@ class _ScenarioEditorStatesMixin:
                 return
             st = {"channels": ev.pop("channels", {})}
             device = ev.pop("device", None)
-            if device:
+            # =353④: 全種別「なし」は {} で保存されている。空 dict を偽として
+            # 落とすと device 未指定=「全種別をCが担当」(後方互換の既定)に
+            # 化けていたので、キーがあればそのまま移す
+            if device is not None:
                 st["device"] = device
             # =256: BGMは開始ステートへ移す(Q7。他ステートは既定の
             # 「引き継ぐ」なので聴感は変わらない)
             bgm = ev.pop("bgm", None)
             if bgm is not None:
                 st["bgm"] = bgm
+            # =347 の取りこぼし: 背景も S1 へ移す(以前は落ちて消えていた)。
+            # =358/=359 の表示制限も同じ
+            for k in ("background",) + tuple(self.PLAYUI_KEYS):
+                v = ev.pop(k, None)
+                if v is not None:
+                    st[k] = v
             # 動画は =52 でチャンネルの中身になったので、channels ごと
             # 移動すれば追従する(=49の video キー移動は不要になった)
             ev["states"] = {"S1": st}
@@ -1200,13 +1221,19 @@ class _ScenarioEditorStatesMixin:
                     else:
                         ch["end"] = {"type": "once"}
             ev["channels"] = channels
-            if st.get("device"):
+            if st.get("device") is not None:   # =353④: {}(全て「なし」)も戻す
                 ev["device"] = st["device"]
             # =256: ステートのBGMをイベントへ戻す
             if st.get("bgm") is not None:
                 ev["bgm"] = st["bgm"]
             else:
                 ev.pop("bgm", None)
+            # =347 の取りこぼし(背景)・=358/=359 もイベントへ戻す
+            for k in ("background",) + tuple(self.PLAYUI_KEYS):
+                if st.get(k) is not None:
+                    ev[k] = st[k]
+                else:
+                    ev.pop(k, None)
 
         self.sel_state = None
         self._load_panel(ev_id)

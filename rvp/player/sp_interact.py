@@ -90,7 +90,11 @@ class _ScenarioPlayerInteractMixin:
             else "{0}/{1}".format(event.event_id, state_id)
         shown = rule.entries if vis is None else [rule.entries[i] for i in vis]
         self.state["choice"] = {"event_id": ui_id,
-                                "labels": [e.label for e in shown]}
+                                "labels": [e.label for e in shown],
+                                # =363: ボタンの色(""=既定色)
+                                "colors": [e.color for e in shown],
+                                # =357: 残り時間を「??:??」と伏せる
+                                "hide_remaining": bool(rule.hide_remaining)}
         self._log_choice_show(rule, vis)
         self._video_osd(tr("選択肢が表示されています(RVPウィンドウで選択)"))
         return None
@@ -158,7 +162,10 @@ class _ScenarioPlayerInteractMixin:
             items += " " + tr("(非表示: {0})").format(hidden)
         extras = []
         if rule.timeout_ms is not None:
-            extras.append(tr("制限{0:g}秒").format(rule.timeout_ms / 1000.0))
+            if rule.hide_remaining:     # =357 Q9: ④ログでも秒数を伏せる
+                extras.append(tr("制限??秒"))
+            else:
+                extras.append(tr("制限{0:g}秒").format(rule.timeout_ms / 1000.0))
         extras.append(tr("既定={0}").format(self._default_desc(rule)))
         self._log("choice", tr("選択肢を表示: {0}").format(items)
                   + " (" + " / ".join(extras) + ")")

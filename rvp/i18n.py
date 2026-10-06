@@ -2058,4 +2058,34 @@ EN: dict[str, str] = {
     '{0}: hide_visited は true / false で指定してください': '{0}: hide_visited must be true or false',
     '{0}: when_all_hidden は {{"to": ...}} で指定してください': '{0}: specify when_all_hidden as {{"to": ...}}',
     '{0} when_all_hidden': '{0} when_all_hidden',
+    # =357 選択肢の残り時間を隠す
+    '残り時間を隠す': 'Hide time left',
+    '残り ??:??': 'Time left ??:??',
+    '制限??秒': 'limit ??s',
+    '{0}: hide_remaining は true / false で指定してください': '{0}: hide_remaining must be true or false',
+    # =358/=359 再生タブの表示制限(ノードごと)
+    '再生タブ:': 'Play tab:',
+    '再生時間を隠す': 'Hide playback time',
+    'シーク操作を禁止': 'Disable seeking',
+    '{0}: {1} は true / false で指定してください': '{0}: {1} must be true or false',
+    '{0}: ステート形式では {1} は各ステートに指定してください': '{0}: in state form, specify {1} in each state',
+    # =361
+    '(シーク禁止)': '(seek disabled)',
+    # =366 再生タブの操作部品を隠す
+    '再生タブの操作': 'Play tab controls',
+    '視聴者に使わせたくない操作部品を隠します(作成者の指定がそのまま効きます)。': "Hide controls you don't want viewers to use (your setting applies as-is).",
+    '◀◀/▶▶(イベントの巻き戻し/スキップ)ボタンを隠す': 'Hide the ◀◀/▶▶ (rewind/skip event) buttons',
+    '「自動選択(ランダム)」チェックを隠す(再生中は自動選択オフとして扱う)': 'Hide the "Auto-select (random)" checkbox (treated as off during playback)',
+    'play_controls はオブジェクトで指定してください': 'play_controls must be an object',
+    'play_controls: {0} は true/false で指定してください': 'play_controls: {0} must be true or false',
+    'play_controls: 知らないキーがあります: {0}': 'play_controls: unknown keys: {0}',
+    # =367 再生オプションの並びと文言
+    '再生タブ': 'Play tab',
+    'シナリオ再生中に視聴者に使わせたくない機能を非表示にします。': "Hides features you don't want viewers to use during playback.",
+    '「◀◀/▶▶」ボタン(イベントの巻き戻し/スキップ)を表示しない': 'Don\'t show the "◀◀/▶▶" buttons (rewind/skip event)',
+    '「自動選択(ランダム)」チェックを表示しない': 'Don\'t show the "Auto-select (random)" checkbox',
+    'シナリオ再生中のネタバレ防止の為、イベント遷移図の見せたくない範囲を非表示にします。': "To avoid spoilers during playback, hides the parts of the event map you don't want to show.",
+    '未到達のイベント名を「？」表示にする': 'Show unreached event names as "?"',
+    '未通過の矢印を隠す': 'Hide arrows not yet taken',
+    '未到達のイベント・未通過の矢印を完全に隠す': 'Completely hide unreached events and untaken arrows',
 }

@@ -35,11 +35,17 @@ class _RVPAppTabPlayMixin:
         tp.pack(fill="x", padx=16, pady=(10, 12))
 
         # 音声シークバー(再生秒数/合計時間)
+        # =361: 時間の右隣に「(シーク禁止)」(シーク禁止のノードの間だけ)
+        time_row = ctk.CTkFrame(tp, fg_color="transparent")
+        time_row.pack(fill="x", pady=(6, 0))
         self.time_label = ctk.CTkLabel(
-            tp, text="00:00.0 / 00:00.0", text_color=LABEL,
+            time_row, text="00:00.0 / 00:00.0", text_color=LABEL,
             font=ctk.CTkFont(size=12),
         )
-        self.time_label.pack(anchor="w", pady=(6, 0))
+        self.time_label.pack(side="left")
+        self.seek_lock_label = ctk.CTkLabel(
+            time_row, text=tr("(シーク禁止)"), text_color=_clr.YELLOW_TEXT,
+            font=ctk.CTkFont(size=12))
         self.seek_slider = ctk.CTkSlider(
             tp, from_=0, to=1000, number_of_steps=1000,
             height=18, progress_color=_clr.ACCENT,
@@ -62,6 +68,7 @@ class _RVPAppTabPlayMixin:
         # 幅690では入りきらないので1行目に置く)。
         row1 = ctk.CTkFrame(tp, fg_color="transparent")
         row1.pack(fill="x", pady=(10, 0))
+        self.play_row1 = row1          # =366: ◀◀/▶▶ の行を戻す位置の目印
         self.auto_select_var = tk.BooleanVar(value=False)
         self.auto_select_check = ctk.CTkCheckBox(
             row1, text=tr("自動選択（ランダム）"), variable=self.auto_select_var,

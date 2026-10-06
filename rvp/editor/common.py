@@ -7,7 +7,7 @@ import tkinter as tk
 import os
 from ..scenario import AUTO_FS_TAGS, CSV_TRACK_TYPES, migrate_video_node
 from ..scenario_map import OK_COLOR
-from .. import apptheme, scenario_map as _smap, winstate
+from .. import apptheme, scenario_map as _smap, winstate, wintitle
 from ..i18n import load_config, save_config, tr
 
 
@@ -59,9 +59,12 @@ COMBO_TEXT_DISABLED = ("gray28", "gray60")
 apptheme.register(globals())
 
 
-# =124 ノード着色パレット: 縦=色相7段(赤・橙・黄・緑・青・藍・紫)×
+# =124 ノード着色パレット: 縦=色相8段(赤・橙・黄・緑・青・藍・紫・ピンク)×
 # 横=PCCSトーン近似5列(左からP・lt・V・dp・dk)。最下段は彩度0%(白〜黒)。
 # HLSからの機械生成値(色相0/28/52/135/205/230/282°)。
+# =364: 紫の次にピンクの段を追加(ユーザー要望)。最初の 330°(#ff0080 系)は
+# 「もう少し桃色・桜色寄りに」との実機 FB で、色相約346°・彩度を抑えた
+# 手調整の5トーン(桜色〜桃色〜濃い桃)に差し替えた。
 NODE_PALETTE = (
     ("#efc8c8", "#e88787", "#ff0000", "#a00d0d", "#581313"),   # 赤
     ("#efdac8", "#e8b487", "#ff7700", "#a0520d", "#583313"),   # 橙
@@ -70,6 +73,7 @@ NODE_PALETTE = (
     ("#c8dfef", "#87c0e8", "#0095ff", "#0d63a0", "#133b58"),   # 青
     ("#c8ceef", "#8797e8", "#002bff", "#0d26a0", "#131e58"),   # 藍
     ("#e3c8ef", "#cb87e8", "#b300ff", "#740da0", "#431358"),   # 紫
+    ("#fadce3", "#f4a6b7", "#ee6f8c", "#b8445f", "#6e2737"),   # 桃・桜(=364)
     ("#ffffff", "#cccccc", "#999999", "#666666", "#333333"),   # 彩度0%
 )
 
@@ -384,6 +388,10 @@ def _front_window(win):
         try:
             if not win.winfo_exists():
                 return
+            # =369: transient で作り直された外枠のタイトルバーを外観に合わせる
+            # (ダークで上部だけ白くなる対策。CTk の withdraw 往復の後にも効くよう
+            # 0/250/600ms の各回で掛け直す)
+            wintitle.fix_titlebar(win)
             win.lift()
             win.attributes("-topmost", True)
             win.after(50, release)

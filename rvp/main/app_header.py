@@ -1,6 +1,8 @@
 """メイン画面: ヘッダ(タイトル・ヘルプ・設定・外観/テーマ/言語/フォント)とウィンドウ寸法(RVPApp の mixin)。"""
 from __future__ import annotations
 
+from .. import wintitle
+
 import customtkinter as ctk
 import tkinter as tk
 import warnings
@@ -318,6 +320,7 @@ class _RVPAppHeaderMixin:
         win.title("Settings")   # =135: 言語切替導線は常に英語表記
         win.resizable(False, False)
         win.transient(self.root)
+        wintitle.schedule_fix_titlebar(win)   # =369: ダークでタイトルバーが白くなる対策
         win.protocol("WM_DELETE_WINDOW", self._close_settings)
         # 設定ボタンの下あたりへ表示
         try:

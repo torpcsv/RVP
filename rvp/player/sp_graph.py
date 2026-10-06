@@ -7,6 +7,12 @@ from ..scenario import (TRACK_LINEAR, TRACK_ROTATE, TRACK_ROTATE_A10,
 from .common import GRAPH_SEG_LIMIT
 
 
+# =355: 最初の指示より前(再生エンジンは停止を送っている=271)にグラフへ描く値。
+# rotate は 50=停止(正逆の中央。_graph_points_rotate の写像)、vibration は 0。
+GRAPH_PRE_ROTATE = 50.0
+GRAPH_PRE_VIBRATION = 0.0
+
+
 class _ScenarioPlayerGraphMixin:
     """ScenarioPlayer の mixin(=301 分割)。デバイス動作グラフ用のスナップショット"""
 
@@ -38,12 +44,15 @@ class _ScenarioPlayerGraphMixin:
         return out
 
     def _graph_add(self, base: str, kind: str, points: list, clock,
-                   offset_key: str, lane: str = "", rotor=None):
+                   offset_key: str, lane: str = "", rotor=None, pre=None):
         if not points or clock is None:
             return None
         seg = {"base": base, "kind": kind, "points": points,
                "times": [p[0] for p in points], "clock": clock,
                "offset_key": offset_key, "lane": lane, "rotor": rotor,
+               # =355: 最初の指示より前に描く値(None=描かない)。rotate/vibration は
+               # 最初の指示まで停止する(=271)ので、その停止の線を引く
+               "pre": pre,
                "t0": 0.0, "live": True,
                # =71: 再生を開始したイベント経過時刻。**履歴なので動かさない**。
                # 描画はこの x0 から「次の断片の x0」までの窓に限る(重なり防止)。
@@ -67,7 +76,7 @@ class _ScenarioPlayerGraphMixin:
         elif ttype == TRACK_VIBRATION:
             segs.append(self._graph_add(
                 "vibration", "step", self._graph_points_funscript(src),
-                clock, "vibration"))
+                clock, "vibration", pre=GRAPH_PRE_VIBRATION))
         elif ttype in (TRACK_ROTATE, TRACK_ROTATE_A10):
             ufo = (ttype == TRACK_ROTATE)
             lane = "ufo" if ufo else "a10"
@@ -78,11 +87,12 @@ class _ScenarioPlayerGraphMixin:
                 for rotor in (0, 1):
                     segs.append(self._graph_add(
                         base, "step", self._graph_points_rotate(src, rotor),
-                        clock, okey, lane=lane, rotor=rotor))
+                        clock, okey, lane=lane, rotor=rotor,
+                        pre=GRAPH_PRE_ROTATE))
             else:
                 segs.append(self._graph_add(
                     base, "step", self._graph_points_rotate(src, 0),
-                    clock, okey, lane=lane))
+                    clock, okey, lane=lane, pre=GRAPH_PRE_ROTATE))
         return [s for s in segs if s]
 
     def _graph_now_ms(self) -> float:
@@ -133,6 +143,7 @@ class _ScenarioPlayerGraphMixin:
         now = self._graph_now_ms()
         segs = [{"key": self._graph_key(s), "kind": s["kind"],
                  "points": s["points"], "times": s["times"],
+                 "pre": s.get("pre"),                      # =355
                  "x0": s["x0"], "x1": None,
                  "t0": self._graph_t0(s, now), "live": s["live"]}
                 for s in list(self.graph_segments)]

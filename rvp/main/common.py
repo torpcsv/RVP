@@ -68,6 +68,10 @@ WARN_TEXT = ("#a06000", WARN_COLOR)    # 橙 4.4:1
 NEG_TEXT = ("#c2447f", NEG_COLOR)      # 桃 4.2:1
 
 
+# =361: 「(シーク禁止)」の黄色(ライトは白地で読める濃い黄土色)
+YELLOW_TEXT = ("#8a6d00", "#f2d024")
+
+
 ERROR_TEXT = ("#c93a3a", ERROR_COLOR)  # 赤 4.4:1
 
 

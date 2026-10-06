@@ -95,10 +95,89 @@ class _RVPAppPlayPagesMixin:
         art = getattr(self, "bg_art", None)
         if art is None or art.solo or not art.can_solo():
             return
-        art.enter_solo()
+        self._enter_bg_solo(2)
+
+    # ---- =356 イラスト表示の3段階 ----
+    # ①全表示(stage 0)→ ②画像のみ(2)→ ③画像と選択肢(3)→ ① と、外周の余白
+    # (①)/覆い(②③)の左クリックで循環する。③は選択肢が出ている間だけ
+    # 最下部に選択肢バーを出す(出ていなければ見た目は②と同じ=Q1)。
+    # ②で新しい選択肢が出たら③へ、③では③のまま(①では①のまま)=Q6。
+    # Esc はどの段階からでも①(Q4)。数値入力・背景が消えたときは①(Q5/Q7)。
+
+    @property
+    def bg_solo_stage(self) -> int:
+        """=356: 0=①全表示 / 2=②画像のみ / 3=③画像と選択肢。"""
+        art = getattr(self, "bg_art", None)
+        if art is None or not art.solo:
+            return 0
+        return getattr(self, "_bg_solo_stage", 0) or 2
+
+    def _enter_bg_solo(self, stage: int) -> bool:
+        """=356: ②または③へ入る(既に覆っていれば段階だけ変える)。"""
+        art = getattr(self, "bg_art", None)
+        if art is None:
+            return False
+        if not art.solo:
+            if not art.can_solo():
+                return False
+            if not art.enter_solo(on_exit=self._on_bg_solo_exited,
+                                  on_click=self._on_bg_solo_cover_click):
+                return False
+            # =363: ③の半透明の選択肢は覆いの絵に描き込むので、覆いを
+            # 描き直すたび(リサイズ・クロスフェード)に描き直す
+            art.solo_after_mirror = self._render_solo_choice
+            try:
+                # 覆いの大きさが決まる/変わるたびに描き直す(作った直後は 1x1)
+                art.solo_cover.bind("<Configure>",
+                                    lambda _e: self._render_solo_choice(),
+                                    add="+")
+                art.solo_cover.bind("<Motion>", self._on_solo_cover_motion)
+                art.solo_cover.bind("<Leave>",
+                                    lambda _e: self._solo_set_hover(None))
+            except Exception:
+                pass
+        self._bg_solo_stage = stage
+        self._render_solo_choice()
+        return True
+
+    def _on_bg_solo_cover_click(self, e=None):
+        """=356: 覆いのクリック=②→③、③→①(選択肢ボタンの上は対象外)。
+
+        =360: ②で選択肢が出ていない(③にしても見た目が変わらない)ときは
+        ③を飛ばして①へ戻す(クリックが効いていないように見えるため)。
+        =363: ③の選択肢は覆いの絵に描き込んでいるので、ここで位置を判定する。
+        ボタンの上=その選択肢を選ぶ / カードの地の上=何もしない。
+        """
+        if e is not None and self.bg_solo_stage == 3:
+            hit = self._solo_hit(e.x, e.y)
+            if hit == "card":
+                return
+            if isinstance(hit, int):
+                self._solo_choose(hit)
+                return
+        if self.bg_solo_stage == 2 and self._solo_choice_available():
+            self._bg_solo_stage = 3
+            self._render_solo_choice()
+        else:
+            art = getattr(self, "bg_art", None)
+            if art is not None:
+                art.exit_solo()
+
+    def _solo_choice_available(self) -> bool:
+        """=360: ③で見せる選択肢があるか(表示中の選択肢カードがある)。"""
+        return bool(getattr(self, "_choice_labels", None)
+                    and getattr(self, "choice_buttons", None))
+
+    def _on_bg_solo_exited(self):
+        """=356: 覆いが外れた(どの理由でも)。③の選択肢は覆いと一緒に消える。"""
+        self._bg_solo_stage = 0
+        art = getattr(self, "bg_art", None)
+        if art is not None:
+            art.solo_after_mirror = None
+        self._solo_reset_layout()
 
     def _on_bg_solo_escape(self, _e=None):
-        """=351: Esc でも UI を戻す(Q4)。"""
+        """=351: Esc でも UI を戻す(Q4)。=356: ②③どちらからでも①へ。"""
         art = getattr(self, "bg_art", None)
         if art is not None and art.solo:
             art.exit_solo()
@@ -380,11 +459,14 @@ class _RVPAppPlayPagesMixin:
             if self.scenario is not None else None
         mask_names = bool(spoil and spoil.mask_names)
         hide_edges = bool(spoil and spoil.hide_edges)
+        # =367: 未到達のイベント・未通過の矢印を完全に隠す(上の2つより優先)
+        hide_unvisited = bool(spoil and getattr(spoil, "hide_unvisited", False))
         seen_edges = tuple(sorted(st.get("visited_edges") or ())) \
-            if hide_edges else ()
+            if (hide_edges or hide_unvisited) else ()
         data = self._map_data
         sig = (id(data), trail_ids, cur, cur_state, state_trail,
                glow, visited, mask_names, hide_edges, seen_edges,
+               hide_unvisited,
                ctk.get_appearance_mode())
         if sig == self._map_sig and not center:
             return
@@ -412,7 +494,9 @@ class _RVPAppPlayPagesMixin:
             glow=glow, visited=visited, on_click=None,
             positions=manual_pos,
             mask_names=mask_names, hide_edges=hide_edges,
-            seen_edges=set(seen_edges) if hide_edges else None)
+            seen_edges=set(seen_edges) if (hide_edges or hide_unvisited)
+            else None,
+            hide_unvisited=hide_unvisited)
 
         # ステート形式イベント実行中(および停止後の余韻)は下半分にステート図
         ev_raw = data["events"].get(cur) if cur else None

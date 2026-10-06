@@ -231,6 +231,8 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
             "vibration_pos": 0,      # vibration: 直近のpos(0=停止)
             "device_channel": "",
             "seek_channel": "",       # シークバー追従チャンネル(表示・シーク対象)
+            "hide_time": False,       # =358 再生時間を伏せる(現在のノード)
+            "no_seek": False,         # =359 シーク操作の禁止(現在のノード)
             "video_file": "",         # 再生中の動画(動画chのあるときのみ)
             "video_channel": "",      # 動画チャンネルのID(=52。""=動画なし)
             "message": "",
@@ -557,6 +559,8 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
         s["vibration_pos"] = 0
         s["device_channel"] = ""
         s["seek_channel"] = ""
+        s["hide_time"] = False
+        s["no_seek"] = False
         s["video_file"] = ""
         s["video_channel"] = ""
         s["event_trail"] = ()
@@ -605,6 +609,10 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
         音声は実際の途中位置(ms)から再生される(rawバイト切り出し方式)。
         """
         if self.state["status"] not in ("playing", "paused"):
+            return
+        if self.state.get("no_seek"):
+            # =359: シーク禁止のノード(UI 側も無効表示にしているが、
+            # 呼び出し経路によらずここで止める)
             return
         duration = self.state["duration_ms"]
         if duration <= 0:
@@ -918,6 +926,9 @@ class ScenarioPlayer(_ScenarioPlayerLogMixin, _ScenarioPlayerInteractMixin, _Sce
             self._log("state", label)
         self.state["device_channel"] = st.device_channel
         self.state["seek_channel"] = st.seek_follow_channel()
+        # =358/=359: ノードの表示制限(引き継がない=入場のたびに上書き)
+        self.state["hide_time"] = bool(st.hide_time)
+        self.state["no_seek"] = bool(st.no_seek)
 
         # ステート開始時の変数操作(再入のたびに発火する)
         self._apply_ops(st.on_start, tr("ステート開始時"))

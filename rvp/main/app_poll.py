@@ -219,10 +219,24 @@ class _RVPAppPollMixin:
 
         elapsed = st["elapsed_ms"]
         duration = st["duration_ms"]
-        self._apply(self.time_label, text=f"{fmt(elapsed)} / {fmt(duration)}")
+        playing = status in ("playing", "paused")
+        if playing and st.get("hide_time"):
+            # =358: ノードの指定で再生時間を伏せる(シークバーのつまみは
+            # 従来どおり進む=Q11 A)
+            self._apply(self.time_label, text="??:??.? / ??:??.?")
+        else:
+            self._apply(self.time_label,
+                        text=f"{fmt(elapsed)} / {fmt(duration)}")
 
         # シークバー(ドラッグ中はユーザー操作を優先して上書きしない)
-        seekable = status in ("playing", "paused") and duration > 0
+        # =359: シーク禁止のノードではバー・↺10/↻10 を無効表示にする
+        seekable = playing and duration > 0 and not st.get("no_seek")
+        # =361: シーク禁止の間は時間の右隣に黄色で「(シーク禁止)」
+        lock = playing and bool(st.get("no_seek"))
+        if lock and not self.seek_lock_label.winfo_manager():
+            self.seek_lock_label.pack(side="left", padx=(10, 0))
+        elif not lock and self.seek_lock_label.winfo_manager():
+            self.seek_lock_label.pack_forget()
         self._apply(self.seek_slider, state="normal" if seekable else "disabled")
         # 10秒送り/戻しボタンはシーク可能なときだけ有効
         seek_state = "normal" if seekable else "disabled"
@@ -270,15 +284,19 @@ class _RVPAppPollMixin:
             if sig != self._choice_sig:
                 self._choice_sig = sig
                 self._choice_display = "active"
-                self._show_choice_card(list(sig[1]))
+                self._show_choice_card(list(sig[1]),
+                                       list(ch.get("colors") or ()))   # =363
                 self._schedule_autoselect(sig, len(sig[1]))
             rem = st.get("choice_remaining_ms")
-            if rem is not None:
+            if rem is not None and ch.get("hide_remaining"):
+                # =357: タイムリミットはあるが残り時間を伏せる
+                self._set_choice_timer_text(tr("残り ??:??"))
+            elif rem is not None:
                 s = max(0, rem) / 1000
-                self._apply(self.choice_timer_label,
-                            text=tr("残り {0}:{1:02d}").format(int(s // 60), int(s % 60)))
+                self._set_choice_timer_text(
+                    tr("残り {0}:{1:02d}").format(int(s // 60), int(s % 60)))
             else:
-                self._apply(self.choice_timer_label, text="")
+                self._set_choice_timer_text("")
         else:
             # 選択肢が非アクティブ: 選択肢ありシナリオなら■■■を常時表示、無ければ隠す
             if self._choice_sig is not None:

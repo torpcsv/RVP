@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 from .model import (BackgroundSpec, Channel, DeviceTrack, EventItem,
-                    EventMapSpec,
+                    EventMapSpec, PlayControlsSpec,
     EventState, Pan, ScenarioEvent, _is_num, check_node_color,
     check_node_pos)
 from .constants import (CH_CENTER, DEFAULT_PAN, END_CHANNEL, END_COND,
@@ -20,7 +20,8 @@ from .parse_channels import (check_script_channels, check_video_channels,
     has_content_channels, parse_channel, parse_device, parse_end,
     parse_event_duration_range, parse_seek_channel)
 from .parse_flow import parse_event_end, parse_next, parse_state
-from .parse_items import parse_bgm, parse_node_background, resolve
+from .parse_items import (parse_bgm, parse_node_background,
+    parse_node_ui, resolve)
 from .parse_vars import (parse_conds, parse_numref, parse_ops, parse_vars,
     parse_watch)
 
@@ -98,20 +99,46 @@ class _ScenarioLoadMixin:
                 raise ValueError(
                     tr("event_map はオブジェクトで指定してください"))
             flags = {}
-            for k in ("mask_names", "hide_edges"):
+            map_keys = ("mask_names", "hide_edges", "hide_unvisited")   # =367
+            for k in map_keys:
                 v = raw_map.get(k, False)
                 if not isinstance(v, bool):
                     raise ValueError(
                         tr("event_map: {0} は true/false で指定してください"
                            ).format(k))
                 flags[k] = v
-            unknown = sorted(set(raw_map) - {"mask_names", "hide_edges"})
+            unknown = sorted(set(raw_map) - set(map_keys))
             if unknown:
                 raise ValueError(
                     tr("event_map: 知らないキーがあります: {0}").format(
                         ", ".join(unknown)))
             if any(flags.values()):
                 event_map = EventMapSpec(**flags)
+
+        # ------ 再生タブの操作部品を隠す(=366) ------
+        # "play_controls": {"hide_event_skip": bool, "hide_autoselect": bool}
+        play_controls = None
+        raw_pc = data.get("play_controls")
+        if raw_pc is not None:
+            keys = ("hide_event_skip", "hide_autoselect")
+            if not isinstance(raw_pc, dict):
+                raise ValueError(
+                    tr("play_controls はオブジェクトで指定してください"))
+            flags = {}
+            for k in keys:
+                v = raw_pc.get(k, False)
+                if not isinstance(v, bool):
+                    raise ValueError(
+                        tr("play_controls: {0} は true/false で指定してください"
+                           ).format(k))
+                flags[k] = v
+            unknown = sorted(set(raw_pc) - set(keys))
+            if unknown:
+                raise ValueError(
+                    tr("play_controls: 知らないキーがあります: {0}").format(
+                        ", ".join(unknown)))
+            if any(flags.values()):
+                play_controls = PlayControlsSpec(**flags)
 
         # ---------------- 変数(vars) ----------------
 
@@ -164,6 +191,11 @@ class _ScenarioLoadMixin:
                         # =347: 背景も BGM と同じく各ステートの持ち物
                         raise ValueError(
                             tr('{0}: ステート形式では background は各ステートに指定してください').format(where))
+                    for k in ("hide_time", "no_seek"):
+                        if raw.get(k) is not None:
+                            # =358/=359: 背景と同じく各ステートの持ち物
+                            raise ValueError(
+                                tr('{0}: ステート形式では {1} は各ステートに指定してください').format(where, k))
                     if raw.get("bgm") is not None:
                         # =256: BGMもチャンネルと同じく各ステートの持ち物
                         raise ValueError(
@@ -294,7 +326,8 @@ class _ScenarioLoadMixin:
                             # 持てる。従来は読み落としていて、選択肢だけの
                             # イベントで「BGMオフ」が効かなかった(ユーザー報告)
                             bgm=parse_bgm(ctx, raw.get("bgm"), where),
-            background=parse_node_background(ctx, raw.get("background"), where))
+            background=parse_node_background(ctx, raw.get("background"), where),
+            **parse_node_ui(ctx, raw, where))
                         events[event_id] = ScenarioEvent(
                             event_id=event_id,
                             states={"main": state}, start_state="main",
@@ -409,7 +442,8 @@ class _ScenarioLoadMixin:
                             raw.get("seek_channel"), channels, where),
                         video_channel=vcid,
                         bgm=parse_bgm(ctx, raw.get("bgm"), where),
-            background=parse_node_background(ctx, raw.get("background"), where))
+            background=parse_node_background(ctx, raw.get("background"), where),
+            **parse_node_ui(ctx, raw, where))
                     events[event_id] = ScenarioEvent(
                         event_id=event_id,
                         states={"main": state}, start_state="main",
@@ -433,7 +467,8 @@ class _ScenarioLoadMixin:
                         state_id="main", channels={CH_CENTER: ch},
                         device_map={t: CH_CENTER for t in VALID_TRACK_TYPES},
                         bgm=parse_bgm(ctx, raw.get("bgm"), where),
-            background=parse_node_background(ctx, raw.get("background"), where))
+            background=parse_node_background(ctx, raw.get("background"), where),
+            **parse_node_ui(ctx, raw, where))
                     events[event_id] = ScenarioEvent(
                         event_id=event_id,
                         states={"main": state}, start_state="main",
@@ -673,4 +708,5 @@ class _ScenarioLoadMixin:
             background_enabled=background_enabled,
             background=background,
             event_map=event_map,
+            play_controls=play_controls,
         )
