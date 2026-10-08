@@ -68,6 +68,11 @@ class _ScenarioLoadMixin:
         if map_mode not in ("auto", "manual"):
             raise ValueError(
                 tr('map_mode は "auto" か "manual" で指定してください'))
+        # =371: イベント図の矢印の引き方(表示専用)。省略=straight(直線/曲線)
+        map_edges = data.get("map_edges", "straight")
+        if map_edges not in ("straight", "orthogonal"):
+            raise ValueError(
+                tr('map_edges は "straight" か "orthogonal" で指定してください'))
 
         # ---------------- 背景イラスト(=262) ----------------
         # 文字列("path")と辞書({"file","dim"})の2書式。dim省略=40。

@@ -496,7 +496,8 @@ class _RVPAppPlayPagesMixin:
             mask_names=mask_names, hide_edges=hide_edges,
             seen_edges=set(seen_edges) if (hide_edges or hide_unvisited)
             else None,
-            hide_unvisited=hide_unvisited)
+            hide_unvisited=hide_unvisited,
+            show_labels=False)     # =372: 再生タブは○の下の添え字を出さない
 
         # ステート形式イベント実行中(および停止後の余韻)は下半分にステート図
         ev_raw = data["events"].get(cur) if cur else None

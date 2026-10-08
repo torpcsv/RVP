@@ -1728,6 +1728,11 @@ EN: dict[str, str] = {
     # =299: イベント図の配置モード
     "配置：自動": "Layout: auto",
     "配置：手動": "Layout: manual",
+    # =371: イベント図の矢印の引き方
+    "矢印：直線/曲線": "Arrows: straight/curved",
+    "矢印：カギ線": "Arrows: right-angle",
+    'map_edges は "straight" か "orthogonal" で指定してください':
+        'map_edges must be "straight" or "orthogonal"',
     # =300: イベント遷移図のドッキング解除
     "ドッキング解除": "Undock",
     "ドッキング": "Dock",

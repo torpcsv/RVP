@@ -552,6 +552,75 @@ def _edge_line(c, x1, y1, x2, y2, r, dash, fill, width, self_loop,
                (), shape)
 
 
+# ---------------- =371: カギ線(直交) ----------------
+EDGE_STYLE_KAGI = "orthogonal"   # シナリオ JSON トップレベル "map_edges" の値
+
+
+def is_kagi(data) -> bool:
+    return isinstance(data, dict) and data.get("map_edges") == EDGE_STYLE_KAGI
+
+
+def label_count(ev) -> int:
+    """○の下に積む添え字の段数(Nステート/選択肢・数値入力/動画)。"""
+    if not isinstance(ev, dict):
+        return 0
+    n = 0
+    has_states = "states" in ev
+    if has_states:
+        n += 1
+    nxt = ev.get("next")
+    if (isinstance(nxt, dict) and (nxt.get("choice") is not None
+                                   or nxt.get("input") is not None)) \
+            or has_state_choice(ev):
+        n += 1
+    if video_items(ev.get("channels")) or (has_states and any(
+            video_items(s.get("channels")) for s in ev["states"].values()
+            if isinstance(s, dict))):
+        n += 1
+    return n
+
+
+def _kagi_routes(data, positions, arrows, r, *, show_labels=True) -> dict:
+    """矢印の組 → 折れ線。往復は1本(左→右・同じ列は上→下の向きで決める)。"""
+    from . import map_route
+    pairs, seen_pairs = [], set()
+    for (src, tgt) in arrows:
+        if src not in positions or tgt not in positions:
+            continue
+        key = (src, tgt)
+        if src != tgt and (tgt, src) in arrows \
+                and positions[tgt] < positions[src]:
+            key = (tgt, src)
+        if key not in seen_pairs:
+            seen_pairs.add(key)
+            pairs.append(key)
+    pairs.sort(key=lambda p: (str(p[0]), str(p[1])))
+    # =372: 添え字を描かない図(再生タブ)では、下の口も○のすぐ下にする
+    labels = {n: (label_count(data["events"].get(n)) if show_labels else 0)
+              for n in positions}
+    return map_route.route_edges(positions, pairs, r=r, labels=labels)
+
+
+def _route_for(routes, src, tgt) -> list:
+    pts = routes.get((src, tgt))
+    if pts is not None:
+        return list(pts)
+    return list(reversed(routes[(tgt, src)]))
+
+
+def _kagi_line(c, pts, dash, fill, width, *, both=False,
+               back_fill=None, back_width=None):
+    """カギ線を1本描く。往復は長さの中点で2本に分ける(=341 と同じ流儀)。"""
+    from . import map_route
+    shape = (10, 12, 5)
+    if not both:
+        _draw_poly(c, pts, fill, width, dash, shape)
+        return
+    first, second = map_route.split_half(pts)
+    _draw_poly(c, second, fill, width, (), shape)
+    _draw_poly(c, list(reversed(first)), back_fill, back_width, (), shape)
+
+
 # ---------------- =299: 手動配置 ----------------
 NODE_R = 26            # ノード半径(draw_event_map の r と同じ)
 GRID = NODE_R          # 手動配置の格子の幅・高さ(=円の半径。ユーザー決定)
@@ -641,7 +710,7 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
                    on_click=None, on_rclick=None,
                    positions=None, on_move=None,
                    mask_names=False, hide_edges=False, seen_edges=None,
-                   hide_unvisited=False) -> dict:
+                   hide_unvisited=False, show_labels=True) -> dict:
     """イベント図を canvas へ描画する。positions({ev_id:(x,y)})を返す。
 
     - positions: =299 手動配置の座標(None=自動配置 layout_tree)
@@ -674,6 +743,10 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
       現在地(current)・開始イベント(入口なのでネタバレにならない)だけ。
       配置は全イベントで決める(隠したイベントの位置は空いたまま=到達して
       現れても他の○が動かない)
+    - show_labels: =372 ○の下の添え字(Nステート/選択肢・数値入力/▶動画)を
+      描くか。**再生タブは False**(カギ線の矢印の端が○にくっつくように。
+      添え字があると下の口が添え字の下になり、線が浮いて見えた=ユーザー FB)。
+      編集画面は True のまま
     """
     c = canvas
     c.configure(bg=canvas_bg())   # テーマに応じて背景色を追従
@@ -716,6 +789,12 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
     for (src, tgt) in set(trail) | (seen if hide_edges else set()):
         if src in positions and tgt in positions:
             arrows.setdefault((src, tgt), ())
+    # =371: カギ線モード。経路は**全部の矢印**で決める(ネタバレ防止で
+    # 一部を隠していても、現れた線の形が後から変わらないように)
+    routes = None
+    if is_kagi(data):
+        routes = _kagi_routes(data, positions, arrows, r,
+                              show_labels=show_labels)
     if hide_edges:
         # =343: 通った向きだけ残す。両方通っていれば従来どおり両矢印になる
         arrows = {k: v for k, v in arrows.items() if k in seen}
@@ -753,6 +832,12 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
         # =342: 両端以外のノードの中心。これを跨ぐときだけ弧になる
         others = [p for n, p in positions.items()
                   if n not in (src, tgt) and n in shown]
+        if routes is not None:
+            back_fill, back_width = _fill_width((tgt, src))
+            _kagi_line(c, _route_for(routes, src, tgt), () if both else dash,
+                       fill, width, both=both,
+                       back_fill=back_fill, back_width=back_width)
+            continue
         if both:
             back_fill, back_width = _fill_width((tgt, src))
             _edge_line(c, x1, y1, x2, y2, r, (), fill, width,
@@ -796,9 +881,9 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
             _corner_marks(c, nx, ny, r, tag)
         # 添え字はノード下へ順に積む: Nステート → 選択肢/数値入力 → 動画
         ly = ny + r + 9
-        if masked:
+        if masked or not show_labels:
             # 伏せ字のノードは添え字も出さない(「選択肢」が見えると
-            # 分岐の存在が漏れるため。=343)
+            # 分岐の存在が漏れるため。=343)。=372: 再生タブは添え字なし
             if on_move is not None:
                 _bind_drag(c, tag, ev_id, positions, on_click, on_move)
             elif on_click is not None:
@@ -852,6 +937,12 @@ def draw_event_map(canvas, data, *, selected=None, current=None,
     # スクロール領域は木の最右ノード(max_x)と、実際のノード下端まで。
     ys = [ny for (_nx, ny) in positions.values()] or [60]
     bottom = max(ys) + r + 24
+    if routes:
+        # =371: 迂回したカギ線が図の外へはみ出さないように
+        rx = [p[0] for pts in routes.values() for p in pts]
+        ry = [p[1] for pts in routes.values() for p in pts]
+        max_x = max([max_x] + [v - 20 for v in rx])
+        bottom = max([bottom] + [v + 16 for v in ry])
     c.configure(scrollregion=(0, 0, max_x + 40, bottom))
     return positions
 

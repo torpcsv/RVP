@@ -96,6 +96,13 @@ class _ScenarioEditorMapMixin:
             fg_color="transparent", border_width=0, text_color=TEXT_MUTED,
             hover_color=("gray85", "gray25"),
             command=self._toggle_map_fit)
+        # =371: 矢印の引き方(直線/曲線 ⇄ カギ線)。「配置」の左隣
+        self.map_edge_btn = ctk.CTkButton(
+            bar, text="", width=112, height=18,
+            font=ctk.CTkFont(size=11), anchor="w",
+            fg_color="transparent", border_width=0, text_color=TEXT_MUTED,
+            hover_color=("gray85", "gray25"),
+            command=self._toggle_map_edges)
         # =299: 配置モード(自動/手動)。「図の高さに合わせる」の右隣
         self.map_mode_btn = ctk.CTkButton(
             bar, text="", width=96, height=18,
@@ -105,7 +112,8 @@ class _ScenarioEditorMapMixin:
             command=self._toggle_map_mode)
         if not docked:
             # =300: 別ウィンドウでは折りたたみ/自動フィット/取っ手は無し。
-            # 「配置」だけ出し、右端に「ドッキング」
+            # 「矢印」「配置」だけ出し、右端に「ドッキング」
+            self.map_edge_btn.pack(side="left", padx=(8, 0))    # =371
             self.map_mode_btn.pack(side="left", padx=(8, 0))
             ctk.CTkButton(
                 bar, text=tr("ドッキング"), width=96, height=18,
@@ -219,6 +227,8 @@ class _ScenarioEditorMapMixin:
             # =72: 自動フィットの切替は図が開いているときだけ意味を持つ
             if not self.map_fit_btn.winfo_manager():
                 self.map_fit_btn.pack(side="left", padx=(8, 0))
+            if not self.map_edge_btn.winfo_manager():     # =371
+                self.map_edge_btn.pack(side="left", padx=(8, 0))
             if not self.map_mode_btn.winfo_manager():     # =299
                 self.map_mode_btn.pack(side="left", padx=(8, 0))
             if not self.map_undock_btn.winfo_manager():   # =300
@@ -228,6 +238,7 @@ class _ScenarioEditorMapMixin:
             self.canvas_wrap.pack_forget()
             self.map_sash.pack_forget()   # =285
             self.map_fit_btn.pack_forget()
+            self.map_edge_btn.pack_forget()   # =371
             self.map_mode_btn.pack_forget()
             self.map_undock_btn.pack_forget()
 
@@ -263,6 +274,7 @@ class _ScenarioEditorMapMixin:
         self.map_winmem.watch()
         self.map_winmem.install_close_hook(self._dock_map)   # ×=ドッキング
         self._refresh_map_mode_btn()
+        self._refresh_map_edge_btn()
         self._redraw_canvas()
         if save:
             cfg = load_config()
@@ -292,6 +304,7 @@ class _ScenarioEditorMapMixin:
         self._apply_map_fit_style()
         self._apply_map_open()
         self._refresh_map_mode_btn()
+        self._refresh_map_edge_btn()
         self._redraw_canvas()
         self._apply_map_height()
         if save:
@@ -432,6 +445,25 @@ class _ScenarioEditorMapMixin:
             text=tr("配置：手動") if manual else tr("配置：自動"),
             text_color=_clr.ACCENT_TEXT if manual else TEXT_MUTED)
 
+    # ---- =371: 矢印の引き方(直線/曲線 ⇄ カギ線) ----
+    def _map_kagi(self) -> bool:
+        return _smap.is_kagi(self.data)
+
+    def _toggle_map_edges(self):
+        """直線/曲線 ⇄ カギ線。シナリオ JSON の "map_edges" に持つ
+        (再生タブの図にも効く。直線/曲線=キーなし)。"""
+        if self._map_kagi():
+            self.data.pop("map_edges", None)
+        else:
+            self.data["map_edges"] = _smap.EDGE_STYLE_KAGI
+        self._redraw_canvas()
+
+    def _refresh_map_edge_btn(self):
+        kagi = self._map_kagi()
+        self.map_edge_btn.configure(
+            text=tr("矢印：カギ線") if kagi else tr("矢印：直線/曲線"),
+            text_color=_clr.ACCENT_TEXT if kagi else TEXT_MUTED)
+
     def _on_node_moved(self, ev_id: str, xy):
         """=299: ノードを D&D で離した(格子へ吸着・重なり回避済み)。"""
         ev = self.data["events"].get(ev_id)
@@ -453,6 +485,8 @@ class _ScenarioEditorMapMixin:
             on_move = self._on_node_moved
         if hasattr(self, "map_mode_btn"):
             self._refresh_map_mode_btn()
+        if hasattr(self, "map_edge_btn"):
+            self._refresh_map_edge_btn()      # =371
         # =277: 構造操作(追加/削除/リネーム/コピー/変数・監視/背景 等)は
         # 最後に必ずここを通るので、履歴チェックポイントを置く
         self._hist_check()
