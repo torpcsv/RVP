@@ -146,6 +146,8 @@ class RVPApp(_RVPAppHeaderMixin, _RVPAppTabConnectionMixin, _RVPAppConfigMixin, 
         # =262/=263: 背景イラスト(表示は再生タブ表示中のみ=Q1)。
         # =263でウィンドウアルファ+アンダーレイ方式になり、基準はrootへ。
         self.bg_art = BackgroundArt(self, self.root)
+        # =373: 選択肢ボタン・数値入力の上だけ画像を薄く重ねる
+        self.bg_art.focus_widgets_fn = self._bg_focus_widgets
         self.bg_art.set_user_enabled(self.show_bg_var.get())
         _startup_mark("build: 再生タブ")
         # 起動時の初期タブは「シナリオ」(=42 ユーザー要望)。シナリオを選んで

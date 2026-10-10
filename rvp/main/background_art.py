@@ -63,6 +63,15 @@ class BackgroundArt:
     # に達する。dim>=40は従来どおり(1-ALPHA_LEVELS)のまま=既定の見た目不変。
     IMG_ALPHA_DIM0 = {"weak": 0.28, "mid": 0.48, "strong": 0.62}
     REBUILD_DELAY_MS = 150
+    # =373: 選択肢ボタン・数値入力の上だけ画像を薄く重ねる(ユーザー FB:
+    # 透け具合「弱」でもボタンの文字が読みにくい)。画像窓(alpha a)の
+    # ボタンの範囲に色キー(KEY)で穴を開け、ボタンの範囲だけ画像を描いた
+    # もう1枚の窓(_fwin)を alpha a×FOCUS_RATIO で重ねる。overlay 方式
+    # (Windows のクリック透過)のときだけ。色キーが使えなければ従来どおり
+    FOCUS_RATIO = 0.5
+    FOCUS_KEY = "#fe01fd"            # 色キー(画像にほぼ現れない色)
+    FOCUS_TICK_MS = 250              # ボタンの位置の見回り間隔
+    FOCUS_FORCE = False              # テスト用: Windows 以外でも有効にする
     FADE_STEPS = 4
     FADE_INTERVAL_MS = 30
     RESYNC_DELAYS_MS = (60, 200, 500)
@@ -96,6 +105,16 @@ class BackgroundArt:
         self._xf_img = None               # =347: いま見えている合成フレーム
         self._hwnd = None                 # 画像窓のWin32ハンドル(=266)
         self._solo = None                 # =351 イラストのみ表示の覆い(tk.Canvas)
+        # =373: ボタンの上だけ薄く(穴あけ+薄い窓)
+        self.focus_widgets_fn = None      # () -> [widget, ...](アプリが設定)
+        self._fwin = None                 # ボタンの範囲だけ画像を描く窓
+        self._fcanvas = None
+        self._fhwnd = None
+        self._focus_ok = None             # None=未判定 / True / False
+        self._focus_rects = ()            # 描画済みの範囲 ((x, y, w, h), ...)
+        self._focus_photos = []
+        self._focus_job = None
+        self._focus_refresh_job = None
         try:
             root.bind("<Configure>", self._on_root_configure, add="+")
             root.bind("<Map>", self._on_root_map, add="+")
@@ -225,6 +244,7 @@ class BackgroundArt:
                 self._xf_photo = photo            # 参照を保持
                 self._xf_img = img
                 self._mirror_solo()               # =351
+                self._draw_focus(force=True)      # =373 穴と薄い窓も同じコマへ
             except Exception:
                 i = n
             self._set_img_alpha_now(a_alpha + (b_alpha - a_alpha) * t)
@@ -314,6 +334,7 @@ class BackgroundArt:
             return False
         self._solo = cover
         self._solo_on_exit = on_exit
+        self._draw_focus()                    # =373 覆いの間は穴を開けない
         if callable(on_click):
             # =363: クリック位置で③の選択肢ボタンを判定するので event を渡す
             cover.bind("<Button-1>", lambda e: on_click(e))
@@ -338,6 +359,7 @@ class BackgroundArt:
             cover.destroy()
         except tk.TclError:
             pass
+        self._draw_focus()                    # =373 穴を戻す
         cb = getattr(self, "_solo_on_exit", None)
         self._solo_on_exit = None
         if callable(cb):
@@ -457,6 +479,9 @@ class BackgroundArt:
         canvas.pack(fill="both", expand=True)
         self._under = under
         self._canvas = canvas
+        if self._focus_supported() and not self._set_colorkey(under):
+            # =373: 穴(色キー)を開けられるようにしておく(click-through より先)
+            self._focus_ok = False
 
     def _setup_click_through(self, win) -> bool:
         """Windows: クリック透過+オーナー設定(オーバーレイ方式の初回判定)。
@@ -498,6 +523,16 @@ class BackgroundArt:
         """
         if sys.platform != "win32" or self._under is None:
             return False
+        hwnd = self._apply_click_through_win(self._under)
+        if not hwnd:
+            return False
+        self._hwnd = hwnd
+        if self._fwin is not None:                    # =373 薄い窓も同じ扱い
+            self._fhwnd = self._apply_click_through_win(self._fwin)
+        return True
+
+    def _apply_click_through_win(self, win):
+        """=268/=373: 1枚の窓へクリック透過+オーナーを適用し HWND を返す。"""
         try:
             import ctypes
             GWL_EXSTYLE = -20
@@ -510,10 +545,10 @@ class BackgroundArt:
             SWP_NOZORDER = 0x0004
             SWP_NOACTIVATE = 0x0010
             SWP_FRAMECHANGED = 0x0020
-            self._under.update_idletasks()
-            hwnd = self._resolve_hwnd(self._under)
+            win.update_idletasks()
+            hwnd = self._resolve_hwnd(win)
             if not hwnd:
-                return False
+                return None
             user32 = ctypes.windll.user32
             style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
             user32.SetWindowLongW(
@@ -528,10 +563,9 @@ class BackgroundArt:
                 hwnd, 0, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
                 | SWP_NOACTIVATE | SWP_FRAMECHANGED)
-            self._hwnd = hwnd
-            return True
+            return hwnd
         except Exception:
-            return False
+            return None
 
     def _ensure_click_through(self) -> bool:
         """=268: ラッパーHWNDの再生成を検知したらスタイル等を再適用する。
@@ -544,7 +578,8 @@ class BackgroundArt:
         if self.mode != "overlay" or sys.platform != "win32":
             return False
         cur = self._resolve_hwnd(self._under) if self._under else None
-        if cur and cur != self._hwnd:
+        fcur = self._resolve_hwnd(self._fwin) if self._fwin else None
+        if (cur and cur != self._hwnd) or (fcur and fcur != self._fhwnd):
             self._apply_click_through()
             return True
         return False
@@ -562,9 +597,15 @@ class BackgroundArt:
             import ctypes
             SWP_NOZORDER = 0x0004
             SWP_NOACTIVATE = 0x0010
-            return bool(ctypes.windll.user32.SetWindowPos(
+            ok = bool(ctypes.windll.user32.SetWindowPos(
                 self._hwnd, 0, int(x), int(y), int(w), int(h),
                 SWP_NOZORDER | SWP_NOACTIVATE))
+            if self._fhwnd is not None:               # =373 薄い窓も同じ位置
+                if not ctypes.windll.user32.SetWindowPos(
+                        self._fhwnd, 0, int(x), int(y), int(w), int(h),
+                        SWP_NOZORDER | SWP_NOACTIVATE):
+                    self._fwin.geometry(f"{w}x{h}+{x}+{y}")
+            return ok
         except Exception:
             return False
 
@@ -573,6 +614,13 @@ class BackgroundArt:
             win.attributes("-alpha", value)
         except tk.TclError:
             pass
+        if win is self._under and self._fwin is not None:
+            # =373: 薄い窓は常に画像窓の FOCUS_RATIO 倍(フェードも追従)
+            try:
+                self._fwin.attributes(
+                    "-alpha", round(float(value) * self.FOCUS_RATIO, 4))
+            except (tk.TclError, ValueError):
+                pass
 
     def _show(self) -> None:
         """表示する(冪等。起動直後などは=265のリトライで収束させる)。"""
@@ -596,6 +644,12 @@ class BackgroundArt:
                 self.mode = ("overlay"
                              if self._setup_click_through(self._under)
                              else "underlay")
+            self._ensure_focus_win()              # =373(overlay のときだけ)
+            if self._fwin is not None:
+                try:
+                    self._fwin.deiconify()
+                except tk.TclError:
+                    pass
             self._restack()
             try:
                 self.root.update_idletasks()
@@ -605,6 +659,7 @@ class BackgroundArt:
                 # rootは触らない(タイトルバー完全不透過=265)。画像側を上に
                 # 薄く重ねる(合成結果は=263/=264と同一)。
                 self._fade_to(self._under, self._img_alpha())
+                self._start_focus_tick()          # =373
             else:
                 self._set_win_alpha(self._under, 1.0)
                 self._fade_to(self.root, self._ui_opacity())
@@ -719,7 +774,10 @@ class BackgroundArt:
             self._last_geo = geo
             if not self._win32_move(x, y, w, h):
                 self._under.geometry(f"{w}x{h}+{x}+{y}")
+                if self._fwin is not None:            # =373
+                    self._fwin.geometry(f"{w}x{h}+{x}+{y}")
             self._restack()
+            self.refresh_focus()                      # =373 ボタンの位置も
         except tk.TclError:
             pass
 
@@ -734,16 +792,21 @@ class BackgroundArt:
         try:
             if self.mode == "overlay":
                 self._under.lift(self.root)
+                top = self._under
+                if self._fwin is not None:            # =373 薄い窓は画像窓の上
+                    self._fwin.lift(self._under)
+                    top = self._fwin
                 # =267: rootの子トップレベル(Settings・ヘルプ・編集画面等)を
                 # オーバーレイの上へ再整列する。Settingsはtransient(owned)の
                 # ためrootの直上に保たれ、素朴なlift(root)だとオーバーレイが
                 # その上へ割り込んで薄衣がかかっていた(実機FB)。
                 for w in self.root.winfo_children():
-                    if w is self._under or not isinstance(w, tk.Toplevel):
+                    if w is self._under or w is self._fwin \
+                            or not isinstance(w, tk.Toplevel):
                         continue
                     try:
                         if w.winfo_viewable():
-                            w.lift(self._under)
+                            w.lift(top)
                     except tk.TclError:
                         pass
             else:
@@ -779,6 +842,8 @@ class BackgroundArt:
         if self.shown and self._under is not None:
             try:
                 self._under.deiconify()
+                if self._fwin is not None:            # =373
+                    self._fwin.deiconify()
             except tk.TclError:
                 pass
             if self.mode == "overlay":
@@ -794,6 +859,8 @@ class BackgroundArt:
         if self.shown and self._under is not None:
             try:
                 self._under.withdraw()
+                if self._fwin is not None:            # =373
+                    self._fwin.withdraw()
             except tk.TclError:
                 pass
 
@@ -880,3 +947,179 @@ class BackgroundArt:
         except tk.TclError:
             pass
         self._mirror_solo()                   # =351 覆いも同じ絵・位置へ
+        self._draw_focus(force=True)          # =373 穴と薄い窓も描き直す
+
+    # ---------------- =373 ボタンの上だけ薄く ----------------
+
+    def _set_colorkey(self, win) -> bool:
+        """=373: 窓へ色キー(FOCUS_KEY の画素は完全に透ける)を設定する。"""
+        try:
+            win.attributes("-transparentcolor", self.FOCUS_KEY)
+            return True
+        except tk.TclError:
+            return False
+
+    def _focus_supported(self) -> bool:
+        if self._focus_ok is False:
+            return False
+        return sys.platform == "win32" or self.FOCUS_FORCE
+
+    def _focus_active(self) -> bool:
+        """穴あけ+薄い窓を使うか(overlay 方式・色キーが使える・表示中)。"""
+        return bool(self.shown and self.mode == "overlay"
+                    and self._fwin is not None and self._focus_supported())
+
+    def _ensure_focus_win(self) -> None:
+        """overlay 方式に決まったら薄い窓を作る(作れなければ機能を切る)。"""
+        if self._fwin is not None or self.mode != "overlay" \
+                or not self._focus_supported():
+            return
+        try:
+            win = tk.Toplevel(self.root)
+            win.overrideredirect(True)
+            win.withdraw()
+            if not self._set_colorkey(win):
+                raise tk.TclError("transparentcolor")
+            cv = tk.Canvas(win, bd=0, highlightthickness=0,
+                           bg=self.FOCUS_KEY)
+            cv.pack(fill="both", expand=True)
+        except tk.TclError:
+            self._focus_ok = False
+            try:
+                win.destroy()
+            except Exception:
+                pass
+            return
+        self._fwin = win
+        self._fcanvas = cv
+        self._focus_ok = True
+        try:
+            # 実 HWND(ラッパー)は最初に表示したときにできるので、透明のまま
+            # 一度出してからクリック透過を掛ける(画像窓の _show と同じ順)
+            win.attributes("-alpha", 0.0)
+            win.deiconify()
+            win.update_idletasks()
+            win.attributes("-alpha", round(
+                float(self._under.attributes("-alpha")) * self.FOCUS_RATIO, 4))
+        except (tk.TclError, ValueError):
+            pass
+        if sys.platform == "win32":
+            self._fhwnd = self._apply_click_through_win(win)
+            if not self._fhwnd:                       # 素通しできない窓は使わない
+                self._focus_ok = False
+                self._fwin = self._fcanvas = None
+                try:
+                    win.destroy()
+                except Exception:
+                    pass
+                return
+        geo = self._last_geo
+        if geo is not None:
+            w, h, x, y = geo
+            if not self._win32_move(x, y, w, h):
+                win.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _start_focus_tick(self) -> None:
+        """表示中はボタンの位置を見回る(ページ切替・リサイズ・カードの出入り)。"""
+        if self._focus_job is not None or not self._focus_active():
+            return
+
+        def tick():
+            self._focus_job = None
+            if not self._focus_active():
+                return
+            self._draw_focus()
+            try:
+                self._focus_job = self.root.after(self.FOCUS_TICK_MS, tick)
+            except Exception:
+                pass
+
+        try:
+            self._focus_job = self.root.after(self.FOCUS_TICK_MS, tick)
+        except Exception:
+            pass
+
+    def refresh_focus(self) -> None:
+        """=373: ボタンが出入りした直後に呼ぶ(配置が決まってから描き直す)。"""
+        if not self._focus_active() or self._focus_refresh_job is not None:
+            return
+
+        def run():
+            self._focus_refresh_job = None
+            self._draw_focus()
+
+        try:
+            self._focus_refresh_job = self.root.after(30, run)
+        except Exception:
+            pass
+
+    def focus_rects(self) -> tuple:
+        """いま薄くするボタンの範囲(root のクライアント座標・表示中のもの)。"""
+        if not self._focus_active() or self.solo:
+            return ()
+        fn = self.focus_widgets_fn
+        if not callable(fn):
+            return ()
+        try:
+            widgets = list(fn() or ())
+            rx, ry = self.root.winfo_rootx(), self.root.winfo_rooty()
+        except Exception:
+            return ()
+        out = []
+        for w in widgets:
+            try:
+                if w is None or not w.winfo_viewable():
+                    continue
+                ww, hh = w.winfo_width(), w.winfo_height()
+                if ww < 2 or hh < 2:
+                    continue
+                out.append((w.winfo_rootx() - rx, w.winfo_rooty() - ry,
+                            ww, hh))
+            except tk.TclError:
+                continue
+        return tuple(sorted(out))
+
+    def _focus_frame(self):
+        """穴の中へ描く絵(PIL)と、その左上の x。"""
+        if self._xf_img is not None:
+            return self._xf_img, 0
+        if self._scaled is not None:
+            return self._scaled, int(self._x0)
+        return None, 0
+
+    def _draw_focus(self, force: bool = False) -> None:
+        """画像窓に穴(色キー)を開け、薄い窓にボタンの範囲の絵を描く。"""
+        if self._canvas is None:
+            return
+        rects = self.focus_rects()
+        if not force and rects == self._focus_rects:
+            return
+        self._focus_rects = rects
+        try:
+            self._canvas.delete("focus_hole")
+            for (x, y, w, h) in rects:
+                self._canvas.create_rectangle(
+                    x, y, x + w, y + h, fill=self.FOCUS_KEY, outline="",
+                    width=0, tags="focus_hole")
+        except tk.TclError:
+            pass
+        cv = self._fcanvas
+        if cv is None:
+            return
+        try:
+            cv.delete("all")
+        except tk.TclError:
+            return
+        self._focus_photos = []
+        img, x0 = self._focus_frame()
+        if img is None:
+            return
+        for (x, y, w, h) in rects:
+            try:
+                # 画像の外(左右の黒帯)は crop が黒で埋める
+                crop = img.crop((x - x0, y, x - x0 + w, y + h))
+                photo = PILImageTk.PhotoImage(crop)
+                cv.create_image(x, y, anchor="nw", image=photo)
+                self._focus_photos.append(photo)
+            except Exception:
+                continue

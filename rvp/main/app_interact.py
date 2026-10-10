@@ -58,6 +58,24 @@ class _RVPAppInteractMixin:
             out.append(btn)
         return out
 
+    def _bg_focus_widgets(self) -> list:
+        """=373: 背景イラストを薄く重ねるウィジェット(選択肢ボタン・数値入力)。
+
+        表示されていないもの(カードが外れている・別ページ)は
+        BackgroundArt 側が winfo_viewable で除く。
+        """
+        out = list(getattr(self, "choice_buttons", None) or [])
+        for name in ("input_entry", "input_submit_btn"):
+            w = getattr(self, name, None)
+            if w is not None:
+                out.append(w)
+        return out
+
+    def _bg_focus_refresh(self) -> None:
+        art = getattr(self, "bg_art", None)
+        if art is not None:
+            art.refresh_focus()
+
     def _show_choice_card(self, labels: list[str], colors=None):
         for b in self.choice_buttons:
             b.destroy()
@@ -77,6 +95,7 @@ class _RVPAppInteractMixin:
         if self.bg_solo_stage == 2:
             self._bg_solo_stage = 3
         self._render_solo_choice()
+        self._bg_focus_refresh()          # =373
 
     def _exit_bg_solo(self):
         """=351: 「イラストのみ表示」中なら UI を戻す(数値入力の出現時)。"""
@@ -298,6 +317,7 @@ class _RVPAppInteractMixin:
             b.destroy()
         self.choice_buttons = []
         self._choice_labels = []
+        self._bg_focus_refresh()          # =373
         self._choice_colors = []
         self._render_solo_choice()      # =356: ③の選択肢も消す(③のまま)
 
@@ -424,9 +444,11 @@ class _RVPAppInteractMixin:
         self._pack_play_overlay(self.input_card)
         self._exit_bg_solo()      # =351 Q6: 数値入力も同じ(フォーカスより先に)
         self.input_entry.focus_set()
+        self._bg_focus_refresh()  # =373
 
     def _hide_input_card(self):
         self.input_card.pack_forget()
+        self._bg_focus_refresh()  # =373
 
     def _on_input_submit(self):
         """決定ボタン(またはEnter)。数値検証してplayerへサブミットする。
