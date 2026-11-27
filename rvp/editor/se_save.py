@@ -5,6 +5,7 @@ import copy
 import json
 import os
 from ..scenario import Scenario, auto_bind_tracks
+from ..scenario.rvp_version import with_version_first
 from ..i18n import tr
 
 from .common import _dialog_initialdir, _remember_dialog_dir, _title_from_path
@@ -273,6 +274,9 @@ class _ScenarioEditorSaveMixin:
         # (self.data 自体は base_dir 基準のまま保持=編集を続けても整合)。
         save_dir = os.path.dirname(os.path.abspath(path))
         out_data = self._rebased_data_for_save(save_dir)
+        # =383: 保存した RVP の版を先頭へ(保存のたびに今の版で上書き)。
+        # self.data には持たせない(UNDO 履歴の比較に乗せない=開くときに外す)
+        out_data = with_version_first(out_data)
         payload = json.dumps(out_data, ensure_ascii=False, indent=2)
 
         # 一時ファイルに書いてバリデーション

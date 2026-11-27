@@ -43,6 +43,16 @@ class _ScenarioLoadMixin:
         load_warnings: list[str] = []   # =130 読み込み警告(エラーにしない)
         ctx = LoadContext(base_dir=base_dir, load_warnings=load_warnings)
 
+        # =383: 保存した RVP の版。新しい版/不正な値は警告だけ(エラーにしない)
+        from .rvp_version import (STATUS_INVALID, STATUS_NEWER, check_data,
+                                  invalid_message, newer_message)
+        rvp_version_status, _rv = check_data(data)
+        if rvp_version_status == STATUS_NEWER:
+            load_warnings.append(newer_message(_rv))
+        elif rvp_version_status == STATUS_INVALID:
+            load_warnings.append(invalid_message(_rv))
+        rvp_version = _rv if isinstance(_rv, str) else None
+
         # =252: デバイス連動フラグ(省略=True=従来どおり)。bool以外はエラー
         device_enabled = data.get("device_enabled", True)
         if not isinstance(device_enabled, bool):
@@ -714,4 +724,6 @@ class _ScenarioLoadMixin:
             background=background,
             event_map=event_map,
             play_controls=play_controls,
+            rvp_version=rvp_version,
+            rvp_version_status=rvp_version_status,
         )

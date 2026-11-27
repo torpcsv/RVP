@@ -43,3 +43,7 @@ class Scenario(_ScenarioLoadMixin):
     event_map: "EventMapSpec | None" = None
     # =366: 再生タブの操作部品を隠す(トップレベル "play_controls")。省略=None
     play_controls: "PlayControlsSpec | None" = None
+    # =383: 保存した RVP の版(トップレベル "rvp_version"。省略=None)と、
+    # 今の RVP と比べた結果(rvp_version.STATUS_*: none/ok/newer/invalid)
+    rvp_version: "str | None" = None
+    rvp_version_status: str = "none"

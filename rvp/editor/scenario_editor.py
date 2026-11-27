@@ -10,6 +10,7 @@ import tkinter as tk
 from ._hooks import DND_FILES
 from ..winstate import WindowMemory
 from ..i18n import tr
+from ..scenario import rvp_version as _rvv
 
 from .common import (DEFAULT_EVENT, MUTED, TEXT_HEAD, TEXT_MUTED, VIDEO_EXTS,
     _front_window, _load_raw, _title_from_path, _toolbar_sep)
@@ -172,6 +173,12 @@ class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _Sce
             self.data = {"title": "", "device_enabled": False,
                          "start": "event1",
                          "events": {"event1": json.loads(json.dumps(DEFAULT_EVENT))}}
+        # =383: 保存した RVP の版は編集データに持たせない(保存時に今の版を
+        # 先頭へ書く=UNDO 履歴の比較に乗せない)。新しい版/不正な値は
+        # 開いた後にメッセージ枠(音なし)で知らせる(_report_file_rvp_version)
+        self._file_rvp_status, self._file_rvp_version = \
+            _rvv.check_data(self.data)
+        self.data.pop(_rvv.RVP_VERSION_KEY, None)
 
         # =252: デバイス連動フラグ(JSONトップレベル "device_enabled")。
         # キー省略=ON(旧シナリオは従来どおり)。OFFはデバイス関連UIを隠し、
@@ -225,6 +232,7 @@ class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _Sce
             self._select(first)
         # =277: ここまでの読み込み・初期選択は履歴に含めない(起点にする)
         self._hist_reset()
+        self._report_file_rvp_version()   # =383
 
         _front_window(self)
         # CTkToplevelは内部でwithdraw→約200ms後にdeiconifyするため、その際に
@@ -254,6 +262,25 @@ class ScenarioEditor(_ScenarioEditorMapMixin, _ScenarioEditorMessagesMixin, _Sce
         # チャンネル枠の「(D&D可)」を結果に合わせて出し入れする
         # (以降に作り直されるパネルは build 時に _dnd_ok を見る)。
         self._refresh_dnd_hints()
+
+    def _report_file_rvp_version(self):
+        """開いたファイルの rvp_version が新しい版/不正なら知らせる(=383)。
+
+        メッセージ枠(モーダルなし・音なし)。新しい版は「この RVP で保存すると
+        新しい版の設定が抜けるかもしれない」ことも添える。
+        """
+        st = getattr(self, "_file_rvp_status", _rvv.STATUS_NONE)
+        if st == _rvv.STATUS_NEWER:
+            self._report(
+                "warn", tr("新しい RVP で保存されたシナリオです"),
+                [_rvv.newer_message(self._file_rvp_version),
+                 tr("この RVP で保存すると、この RVP が知らない設定は"
+                    "失われる可能性があります。")])
+        elif st == _rvv.STATUS_INVALID:
+            self._report("warn", tr("rvp_version の値が正しくありません"),
+                         [_rvv.invalid_message(self._file_rvp_version),
+                          tr("保存するとこの RVP の版({0})で書き直されます。"
+                             ).format(_rvv.current_version())])
 
     def _refresh_dnd_hints(self):
         """全チャンネル枠の「(D&D可)」を `_dnd_ok` に合わせる(=160)。

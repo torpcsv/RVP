@@ -59,6 +59,9 @@ class RVPApp(_RVPAppHeaderMixin, _RVPAppTabConnectionMixin, _RVPAppConfigMixin, 
         self.player = ScenarioPlayer(self.intiface)
         self.player.tcode = self.tcode
         self.scenario: Scenario | None = None
+        # =383: 「新しい RVP で保存されたシナリオ」を知らせた (パス, 版) の組。
+        # 同じファイル・同じ版は起動中に1回だけ知らせる
+        self._rvp_newer_notified: set = set()
         # 選択肢UIの状態(再生タブ)
         self._scenario_has_choices = False   # 読込中シナリオに選択肢イベントがあるか
         # =150: 読込中シナリオがデバイストラック(funscript/csv)を持つか。

@@ -5,6 +5,7 @@ import customtkinter as ctk
 import os
 import time
 from ..scenario import Scenario, TRACK_ROTATE_A10, TRACK_ROTATE_UFO
+from ..scenario import rvp_version as _rvv
 from tkinter import filedialog, messagebox
 from ..i18n import load_config, save_config, tr
 from ..rotate_source import load_rotate_source
@@ -205,6 +206,28 @@ class _RVPAppTabScenarioMixin:
             pass
         return lanes
 
+    @staticmethod
+    def _rvp_notice_key(path: str, version) -> tuple:
+        return (os.path.normcase(os.path.abspath(path)), str(version))
+
+    def _notify_rvp_version_newer(self, sc, path: str) -> None:
+        """新しい RVP で保存されたシナリオを、起動中に1回だけ知らせる(=383)。
+
+        ほかの読み込み警告(=130)は再生タブでは出さない決まり(=131)だが、
+        これは「RVP を更新すべき」ことを視聴者に伝える唯一の手段なので、
+        同じファイル・同じ版につき1回だけダイアログを出す(ユーザー決定)。
+        """
+        if sc is None or sc.rvp_version_status != _rvv.STATUS_NEWER:
+            return
+        key = self._rvp_notice_key(path, sc.rvp_version)
+        if key in self._rvp_newer_notified:
+            return
+        self._rvp_newer_notified.add(key)
+        messagebox.showwarning(
+            "RVP",
+            _rvv.newer_message(sc.rvp_version) + "\n"
+            + tr("正しく再生できないときは、RVP を新しい版へ更新してください。"))
+
     def _load_scenario(self, path: str, goto_play: bool = False):
         """シナリオを読み込む。goto_play=True なら成功時に再生タブへ自動遷移。
 
@@ -233,13 +256,23 @@ class _RVPAppTabScenarioMixin:
             self._apply_play_pages()
             self.bg_art.set_scenario(None)       # =262 背景イラストを外す
             self._sync_event_skip_visible()      # =366 隠していた◀◀/▶▶を戻す
+            # =383: 新しい RVP で保存されたファイルなら、失敗の理由かもしれない
+            # ことを添える(このときは下の「一度だけの通知」も済んだ扱い)
+            ver_hint = ""
+            st, ver = _rvv.check_file(path)
+            if st == _rvv.STATUS_NEWER:
+                ver_hint = "\n\n" + _rvv.newer_message(ver) + "\n" + tr(
+                    "新しい RVP で開くと読み込める可能性があります。")
+                self._rvp_newer_notified.add(self._rvp_notice_key(path, ver))
             messagebox.showerror(
                 "RVP",
                 tr('シナリオファイルの読み込みに失敗しました:\n{0}').format(e)
+                + ver_hint
                 + "\n\n" + tr("「編集」ボタンでこのシナリオを編集画面で開けます(素材の抜けは保存時に確認できます)。"))
             return
 
         sc = self.scenario
+        self._notify_rvp_version_newer(sc, path)   # =383
         # =130→=131: 読み込み警告(load_warnings)は**ここでは表示しない**。
         # シナリオ選択のたびに警告音つきダイアログが出るのは驚かせるため、
         # 表示は編集画面の保存時(_report=画面内メッセージ・音なし)に一本化

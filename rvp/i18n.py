@@ -2122,4 +2122,20 @@ EN: dict[str, str] = {
     '(funscript/csvをD&Dで読み込めます)': '(drag & drop funscript/csv to load)',
     '音声・動画(D&D可)': 'Audio/video (drag & drop)',
     '別の種別のスクリプトを新しく作る': 'Create a new script of another type',
+    # =383 シナリオの rvp_version(保存した RVP の版)
+    "このシナリオは RVP {0} で保存されています。この RVP({1})では一部の機能が無視される可能性があります。":
+        "This scenario was saved with RVP {0}. Some features may be ignored "
+        "by this RVP ({1}).",
+    "rvp_version の値が正しくありません({0})。無視して読み込みます。":
+        "Invalid rvp_version value ({0}). It is ignored.",
+    "新しい RVP で保存されたシナリオです": "Scenario saved with a newer RVP",
+    "この RVP で保存すると、この RVP が知らない設定は失われる可能性があります。":
+        "If you save it with this RVP, settings this RVP doesn't know may be lost.",
+    "rvp_version の値が正しくありません": "Invalid rvp_version value",
+    "保存するとこの RVP の版({0})で書き直されます。":
+        "Saving rewrites it with this RVP's version ({0}).",
+    "新しい RVP で開くと読み込める可能性があります。":
+        "It may load in a newer RVP.",
+    "正しく再生できないときは、RVP を新しい版へ更新してください。":
+        "If it doesn't play correctly, please update RVP to the newer version.",
 }
